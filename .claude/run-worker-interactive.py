@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Interactive worker wrapper: streams colorized output while accepting user input."""
+"""Interactive worker wrapper: streams colorized output while accepting user input.
+
+Task claiming happens HERE (not in the LLM) using a file lock to prevent races
+between concurrent workers.
+"""
 
 import subprocess
 import sys
@@ -7,6 +11,9 @@ import json
 import threading
 import os
 import signal
+import fcntl
+import time
+import random
 
 # ANSI colors
 DIM = "\033[2m"
@@ -20,7 +27,72 @@ MAGENTA = "\033[35m"
 BLUE = "\033[34m"
 WHITE_ON_BLUE = "\033[97;44m"
 
+LOCK_FILE = "/tmp/fntypescript-worker.lock"
+REPO = "fnrhombus/fntypescript"
+
 exit_signal = None
+
+
+def claim_task():
+    """Atomically scan for and claim a task using a file lock.
+
+    Returns (issue_number, agent_label) or (None, None) if no work available.
+    """
+    lock_fd = open(LOCK_FILE, "w")
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+        # Scan for tasks with agent: labels
+        result = subprocess.run(
+            ["gh", "issue", "list", "--repo", REPO, "--state", "open",
+             "--json", "number,title,labels", "--jq",
+             '.[] | select(.labels | map(.name) | any(startswith("agent:"))) | '
+             '{number, title, agent: (.labels | map(.name) | map(select(startswith("agent:"))) | .[0]), '
+             'priority: (.labels | map(.name) | map(select(startswith("P"))) | .[0] // "P9")}'],
+            capture_output=True, text=True, timeout=30
+        )
+
+        if result.returncode != 0 or not result.stdout.strip():
+            return None, None
+
+        # Parse tasks and sort by priority
+        tasks = []
+        for line in result.stdout.strip().split("\n"):
+            try:
+                task = json.loads(line)
+                # Skip tasks assigned to the human
+                if task.get("agent") == "agent:fnrhombus":
+                    continue
+                tasks.append(task)
+            except json.JSONDecodeError:
+                continue
+
+        if not tasks:
+            return None, None
+
+        # Sort by priority (P0 first)
+        tasks.sort(key=lambda t: t.get("priority", "P9"))
+        chosen = tasks[0]
+
+        # Claim it: remove the agent: label
+        agent_label = chosen["agent"]
+        issue_num = chosen["number"]
+
+        subprocess.run(
+            ["gh", "issue", "edit", str(issue_num), "--remove-label", agent_label,
+             "--repo", REPO],
+            capture_output=True, text=True, timeout=30
+        )
+
+        print(f"{GREEN}Claimed #{issue_num}: {chosen.get('title', '?')} ({agent_label}){RESET}")
+        return issue_num, agent_label
+
+    except Exception as e:
+        print(f"{RED}Error claiming task: {e}{RESET}")
+        return None, None
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
 
 
 def format_tool_input(name, inp):
@@ -138,6 +210,13 @@ def run_worker():
     global exit_signal
     exit_signal = None
 
+    # Claim a task atomically before launching claude
+    issue_num, agent_label = claim_task()
+    if issue_num is None:
+        print(f"{DIM}No tasks available.{RESET}")
+        exit_signal = "EXIT:IDLE"
+        return exit_signal
+
     cmd = [
         "claude", "--agent", "worker",
         "--print", "--verbose",
@@ -155,12 +234,17 @@ def run_worker():
         bufsize=1,
     )
 
-    # Send initial prompt
+    # Tell the worker which task was already claimed
     init_msg = json.dumps({
         "type": "user",
         "message": {
             "role": "user",
-            "content": "Check the GitHub project for assigned tasks and begin working."
+            "content": (
+                f"Task already claimed for you: issue #{issue_num} (was {agent_label}). "
+                f"The {agent_label} label has already been removed. "
+                f"Skip the startup scan and claiming steps — go straight to execution. "
+                f"Read the issue spec and begin work."
+            )
         }
     })
     proc.stdin.write(init_msg + "\n")
