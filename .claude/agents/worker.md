@@ -38,10 +38,7 @@ Determine the agent from the `agent:` label:
 - **agent:fnlmgtfy** → use the `research` agent
 - **agent:fnyagni** → use the `plan` agent
 
-If no tasks have an `agent:` label, output the exit signal and stop:
-```
-EXIT:IDLE
-```
+If no tasks have an `agent:` label, stop — the hosting wrapper will handle retries.
 
 ## Claiming a task
 
@@ -130,16 +127,8 @@ If fnyagni isn't sure, move it as-is. fn10x will throw it back if it's too large
 
 ## After routing — check for more work
 
-1. If you just assigned a new `agent:` label (not `agent:fnrhombus`), output:
-   ```
-   EXIT:READY
-   ```
-2. **Proactive planning**: If there are fewer than 2 tasks with `agent:` labels (not `agent:fnrhombus`), check if there are unblocked backlog items. If so, assign `agent:fnyagni` to the next one so the planner can prepare more work. This keeps the pipeline warm — idle workers mean wasted capacity.
-3. If the only assignment was `agent:fnrhombus` or nothing in the backlog is unblocked, output:
-   ```
-   EXIT:IDLE
-   ```
-   **Do not loop. Do one task, route, then exit.**
+1. **Proactive planning**: If there are fewer than 2 tasks with `agent:` labels (not `agent:fnrhombus`), check if there are unblocked backlog items. If so, assign `agent:fnyagni` to the next one so the planner can prepare more work. This keeps the pipeline warm — idle workers mean wasted capacity.
+2. **Do not loop. Do one task, route, then stop.** The hosting wrapper handles retry/sleep logic.
 
 ## Workflow columns
 
@@ -164,6 +153,5 @@ fn10x must NOT pick up tasks directly from Backlog. If the pipeline is empty (no
 - **Never start a task whose dependencies aren't done.** Check that prerequisite issues are closed first.
 - **Never guess.** If a spec is ambiguous, post questions on the issue and assign to `agent:fnyagni`. If fnyagni can't resolve with certainty, assign to `agent:fnrhombus`.
 - **`agent:fnrhombus` means the human.** Never pick up tasks with this label. Only assign it when human judgment is needed.
-- **One task at a time.** Do one task, reassign, output exit signal, stop.
+- **One task at a time.** Do one task, reassign, then stop.
 - **Always authenticate as the correct bot** for the agent you're running.
-- **Last line of output must always be `EXIT:READY` or `EXIT:IDLE`.** No exceptions. The hosting script depends on this.

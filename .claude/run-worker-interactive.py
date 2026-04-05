@@ -3,6 +3,10 @@
 
 Task claiming uses labels (quick visibility) + issue comments (distributed lock).
 File lock prevents local races; comment protocol prevents cross-machine races.
+
+Exit code:
+  0 = work was done (loop should restart immediately)
+  1 = no work available (loop should sleep before retrying)
 """
 
 import subprocess
@@ -35,11 +39,10 @@ WHITE_ON_BLUE = "\033[97;44m"
 
 LOCK_FILE = "/tmp/fntypescript-worker.lock"
 REPO = "fnrhombus/fntypescript"
+IDLE_SLEEP = 180  # seconds to sleep when no work available
 
 # Generate a persistent worker ID for this process lifetime
 WORKER_ID = f"{random.choice(WORKER_NAMES)}-{random.randint(10000, 99999)}"
-
-exit_signal = None
 
 
 def gh_comment(issue_num, body):
@@ -67,7 +70,7 @@ def check_claim_won(issue_num):
 
     lines = [l.strip() for l in result.stdout.strip().split("\n") if l.strip()]
 
-    # Simple rule: the LAST claim wins. If our claim is the most recent, we win.
+    # Simple rule: the LAST claim wins.
     if not lines:
         return False
 
@@ -76,12 +79,6 @@ def check_claim_won(issue_num):
 
 def claim_task():
     """Scan for tasks, claim one using labels + comment protocol.
-
-    Flow:
-    1. File lock prevents local races (same machine)
-    2. Post CLAIM comment on issue (distributed lock)
-    3. Wait, then verify our claim was first (cross-machine)
-    4. Remove agent: label (quick visibility for humans)
 
     Returns (issue_number, agent_label) or (None, None) if no work available.
     """
@@ -183,10 +180,8 @@ def truncate(s, n=200):
     return s[:n] + "…" if len(s) > n else s
 
 
-def output_reader(proc):
-    """Read and format claude's stream-json output."""
-    global exit_signal
-
+def output_reader(proc, done_event):
+    """Read and format claude's stream-json output. Sets done_event when result is received."""
     for line in proc.stdout:
         line = line.strip()
         if not line:
@@ -236,10 +231,8 @@ def output_reader(proc):
             cost = msg.get("total_cost_usd", 0)
             dur = msg.get("duration_ms", 0) / 1000
             turns = msg.get("num_turns", 0)
-            result_text = msg.get("result", "")
-            last_line = result_text.strip().split("\n")[-1] if result_text else ""
             print(f"{DIM}── done: {turns} turns, {dur:.1f}s, ${cost:.4f} ──{RESET}")
-            exit_signal = last_line
+            done_event.set()  # Signal that work is complete
 
     sys.stdout.flush()
 
@@ -271,15 +264,13 @@ def input_sender(proc):
 
 
 def run_worker():
-    global exit_signal
-    exit_signal = None
+    """Run one worker cycle. Returns True if work was done, False if no work available."""
 
     # Claim a task atomically before launching claude
     issue_num, agent_label = claim_task()
     if issue_num is None:
         print(f"{DIM}No tasks available.{RESET}")
-        exit_signal = "EXIT:IDLE"
-        return exit_signal
+        return False
 
     cmd = [
         "claude", "--agent", "worker",
@@ -315,46 +306,51 @@ def run_worker():
     proc.stdin.write(init_msg + "\n")
     proc.stdin.flush()
 
+    # done_event signals when the result message arrives (work is complete)
+    done_event = threading.Event()
+
     # Start output reader thread
-    out_thread = threading.Thread(target=output_reader, args=(proc,), daemon=True)
+    out_thread = threading.Thread(target=output_reader, args=(proc, done_event), daemon=True)
     out_thread.start()
 
     # Run input sender on main thread (handles ctrl+c)
     input_sender(proc)
 
-    proc.wait()
+    # Wait for the result message (up to 10 minutes beyond stdin EOF)
+    done_event.wait(timeout=600)
+
+    # Kill the claude process if it's still running (don't wait for natural exit)
+    if proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
     out_thread.join(timeout=5)
 
-    # Release the task (the worker should have re-labeled it, but post RELEASE for the protocol)
+    # Release the task
     release_task(issue_num, "worker session ended")
 
-    return exit_signal
+    return True  # Work was done
 
 
 def main():
-    while True:
-        print(f"\n{YELLOW}=== Worker starting ==={RESET}")
-        signal_val = run_worker()
-        print(f"{DIM}--- Exit signal: {signal_val} ---{RESET}")
+    print(f"{BOLD}Worker {WORKER_ID} starting{RESET}")
 
-        if signal_val == "EXIT:READY":
-            print(f"{GREEN}More work available. Restarting immediately.{RESET}")
-        elif signal_val == "EXIT:IDLE":
-            print(f"{YELLOW}No work. Sleeping 300s...{RESET}")
+    while True:
+        print(f"\n{YELLOW}=== Worker cycle ==={RESET}")
+        work_done = run_worker()
+
+        if work_done:
+            print(f"{GREEN}Work done. Restarting immediately.{RESET}")
+        else:
+            print(f"{YELLOW}No work. Sleeping {IDLE_SLEEP}s...{RESET}")
             try:
-                for i in range(300, 0, -1):
+                for i in range(IDLE_SLEEP, 0, -1):
                     print(f"\r{DIM}Resuming in {i}s (ctrl+c to quit){RESET}", end="")
-                    import time
                     time.sleep(1)
                 print()
-            except KeyboardInterrupt:
-                print(f"\n{RED}Stopped.{RESET}")
-                sys.exit(0)
-        else:
-            print(f"{RED}Unexpected exit. Sleeping 300s...{RESET}")
-            try:
-                import time
-                time.sleep(300)
             except KeyboardInterrupt:
                 print(f"\n{RED}Stopped.{RESET}")
                 sys.exit(0)
