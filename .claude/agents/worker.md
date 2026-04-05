@@ -35,6 +35,27 @@ gh issue list --repo fnrhombus/fntypescript --state open --json number,title,lab
    EXIT:IDLE
    ```
 
+## Claiming a task
+
+Before doing any work, **claim the task** to prevent other workers from grabbing it:
+
+1. Remove the `agent:` label from the issue.
+2. Comment as the appropriate bot: "Picking up this task."
+3. Then proceed to execution.
+
+If a worker crashes, the task will be in "In Progress" with no `agent:` label. See **Orphan recovery** below.
+
+## Orphan recovery
+
+At startup, **before** looking for labeled tasks, check for orphaned tasks:
+
+```bash
+# Find open issues with no agent: label that have a "Picking up this task" comment
+# but no completion comment, and the last bot comment is older than 15 minutes
+```
+
+If you find an orphan, reclaim it: add the appropriate `agent:` label back (infer from the last bot comment which agent was working on it), then let normal task selection pick it up.
+
 ## Execution
 
 1. Read the full issue spec: `gh issue view <N> --repo fnrhombus/fntypescript`
