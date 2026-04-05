@@ -16,7 +16,7 @@ A general-purpose TypeScript Language Service plugin framework — stable extens
 
 ## Agents
 
-- **plan** (Opus) — Planning partner. Discusses direction, writes specs into GitHub issues. Never writes code.
+- **plan** (Opus) — Technical architect. Discusses direction, writes specs into GitHub issues, breaks features into sub-tasks. Never writes code.
 - **research** (Sonnet) — Investigates prior art, docs, and technical questions. Posts findings to issues.
 - **code** (Sonnet) — TDD coding agent. Picks up issues with specs, writes tests first, then implementation.
 - **qa** (Sonnet) — Reviews PRs against specs, runs tests, validates completeness. Never fixes code, only reports.
