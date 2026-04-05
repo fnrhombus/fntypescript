@@ -24,16 +24,24 @@ gh issue list --repo fnrhombus/fntypescript --state open --json number,title,lab
 
 ## Task selection
 
-1. Pick the highest-priority task (P0 > P1 > P2). Prefer "In Progress" over "Up Next".
-2. Determine the agent from the `agent:` label:
-   - **agent:fn10x** → use the `code` agent
-   - **agent:fnnitpick** → use the `qa` agent
-   - **agent:fnlmgtfy** → use the `research` agent
-   - **agent:fnyagni** → use the `plan` agent
-3. If no tasks have an `agent:` label, output the exit signal and stop:
-   ```
-   EXIT:IDLE
-   ```
+**Priority order (finish over start):**
+1. **QA tasks** (`agent:fnnitpick`) — finishing a feature in QA is always highest priority
+2. **Fix cycles** (`agent:fn10x` on issues that already have a PR) — completing in-progress work
+3. **New implementation** (`agent:fn10x` on fresh issues) — only when nothing else is pending
+4. **Research/planning** (`agent:fnlmgtfy`, `agent:fnyagni`)
+
+Within each tier, use P0 > P1 > P2.
+
+Determine the agent from the `agent:` label:
+- **agent:fn10x** → use the `code` agent
+- **agent:fnnitpick** → use the `qa` agent
+- **agent:fnlmgtfy** → use the `research` agent
+- **agent:fnyagni** → use the `plan` agent
+
+If no tasks have an `agent:` label, output the exit signal and stop:
+```
+EXIT:IDLE
+```
 
 ## Claiming a task
 
@@ -126,7 +134,7 @@ If fnyagni isn't sure, move it as-is. fn10x will throw it back if it's too large
    ```
    EXIT:READY
    ```
-2. If nothing was assignable and nothing is in "Up Next", **assign `agent:fnyagni`** to the next unblocked item in the Backlog. The planner will decide whether to break it down into sub-tasks or move it directly to "Up Next" with a spec.
+2. **Proactive planning**: If there are fewer than 2 tasks with `agent:` labels (not `agent:fnrhombus`), check if there are unblocked backlog items. If so, assign `agent:fnyagni` to the next one so the planner can prepare more work. This keeps the pipeline warm — idle workers mean wasted capacity.
 3. If the only assignment was `agent:fnrhombus` or nothing in the backlog is unblocked, output:
    ```
    EXIT:IDLE
