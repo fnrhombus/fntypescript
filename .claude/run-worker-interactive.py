@@ -42,7 +42,8 @@ def format_tool_input(name, inp):
 
 
 def truncate(s, n=200):
-    s = s.replace("\n", "\\n")
+    s = s.replace("\\n", " ").replace("\\t", " ").replace("\n", " ").replace("\t", " ")
+    s = " ".join(s.split())  # collapse multiple spaces
     return s[:n] + "…" if len(s) > n else s
 
 
