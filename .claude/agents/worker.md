@@ -30,12 +30,10 @@ gh issue list --repo fnrhombus/fntypescript --state open --json number,title,lab
    - **agent:fnnitpick** → use the `qa` agent
    - **agent:fnlmgtfy** → use the `research` agent
    - **agent:fnplanner** → use the `plan` agent
-3. If no tasks have an `agent:` label, **poll every 5 minutes**:
-   ```bash
-   echo "No assigned tasks. Waiting 5 minutes..."
-   sleep 300
+3. If no tasks have an `agent:` label, output the exit signal and stop:
    ```
-   Then re-check. Repeat until a task appears or the user intervenes.
+   EXIT:IDLE
+   ```
 
 ## Execution
 
@@ -64,7 +62,15 @@ Switch to planner mode. As fnplanner:
    ```bash
    GH_TOKEN=$(mise exec python -- python3 ~/.config/fnteam/gh-bot-token.py pm) gh issue comment <N> --body "..." --repo fnrhombus/fntypescript
    ```
-6. Loop back to **Startup** to pick up the next task.
+6. Output the exit signal. If you just assigned new tasks, output:
+   ```
+   EXIT:READY
+   ```
+   If nothing was unblocked and there's no more work, output:
+   ```
+   EXIT:IDLE
+   ```
+   **Do not loop. Do one task, reassign, then exit.**
 
 ## Bot → agent mapping
 
@@ -79,5 +85,6 @@ Switch to planner mode. As fnplanner:
 
 - **Never start a task whose dependencies aren't done.** Check that prerequisite issues are closed first.
 - **Never guess.** If a spec is ambiguous, comment on the issue asking for clarification and move to the next task.
-- **One task at a time.** Finish the current task before picking up another.
+- **One task at a time.** Do one task, reassign, output exit signal, stop.
 - **Always authenticate as the correct bot** for the agent you're running.
+- **Last line of output must always be `EXIT:READY` or `EXIT:IDLE`.** No exceptions. The hosting script depends on this.
