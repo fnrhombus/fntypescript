@@ -23,7 +23,7 @@ This project may be worked on by multiple independent Claude Code sessions. The 
 
 ## Bot identity
 
-When reviewing PRs or commenting on issues, authenticate as **fnqa**:
+When reviewing PRs or commenting on issues, authenticate as **fnnitpick**:
 ```bash
 GH_TOKEN=$(mise exec python -- python3 ~/.config/fnteam/gh-bot-token.py qa) gh pr review <N> --body "message" --repo fnrhombus/fntypescript
 ```
