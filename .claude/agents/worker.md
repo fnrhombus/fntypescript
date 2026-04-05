@@ -75,6 +75,11 @@ The next step depends on which agent just finished and whether it succeeded:
 2. Add `agent:fnnitpick` label — QA reviews the PR before anything else happens.
 3. Comment as fn10x on the issue: what was done, link to the PR.
 
+### fn10x (code agent) says the task is too large
+1. Remove `agent:fn10x` label.
+2. Add `agent:fnyagni` label — planner will break it down into sub-tasks.
+3. Comment as fn10x explaining why it's too large and suggesting a split.
+
 ### fn10x (code agent) has questions about the spec
 1. Remove `agent:fn10x` label.
 2. Comment as fn10x on the issue listing the specific questions.
@@ -104,6 +109,11 @@ The next step depends on which agent just finished and whether it succeeded:
 ### fnyagni (plan agent) completed
 1. Remove `agent:fnyagni` label.
 2. Assign the next unblocked task(s) to the appropriate agent.
+
+Note: When fnyagni pulls from Backlog, it may either:
+- Move the item directly to "Up Next" with a spec (if the scope is obviously right-sized)
+- Break it down into sub-tasks first (if it's CERTAIN breakdown is needed — don't overthink it)
+If fnyagni isn't sure, move it as-is. fn10x will throw it back if it's too large.
 
 ### Any agent is blocked
 1. Remove the current agent label.
