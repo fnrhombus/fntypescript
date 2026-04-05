@@ -1,0 +1,39 @@
+name: Spec
+description: A specification for a feature or component (used by the planning agent)
+labels: ["feature"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What this achieves and why.
+    validations:
+      required: true
+  - type: textarea
+    id: public-api
+    attributes:
+      label: Public API
+      description: Exact function signatures, types, and behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: edge-cases
+    attributes:
+      label: Edge Cases
+      description: What happens in unusual situations.
+    validations:
+      required: false
+  - type: textarea
+    id: test-scenarios
+    attributes:
+      label: Test Scenarios
+      description: Specific cases the tests should cover, with expected behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: implementation-notes
+    attributes:
+      label: Implementation Notes
+      description: Any non-obvious constraints or approaches.
+    validations:
+      required: false
