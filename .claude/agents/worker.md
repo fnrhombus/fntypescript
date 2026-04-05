@@ -45,32 +45,59 @@ gh issue list --repo fnrhombus/fntypescript --state open --json number,title,lab
    GH_TOKEN=$(mise exec python -- python3 ~/.config/fnteam/gh-bot-token.py <bot>) gh issue comment <N> --body "Done." --repo fnrhombus/fntypescript
    ```
 
-## After task completion
+## After task completion — routing
 
-Switch to planner mode. As fnplanner:
+The next step depends on which agent just finished and whether it succeeded:
 
-1. Review what just finished and what's now unblocked.
-2. Check the dependency graph:
+### fn10x (code agent) completed successfully
+1. Remove `agent:fn10x` label.
+2. Add `agent:fnnitpick` label — QA reviews the PR before anything else happens.
+3. Comment as fn10x on the issue: what was done, link to the PR.
+
+### fn10x (code agent) has questions about the spec
+1. Remove `agent:fn10x` label.
+2. Comment as fn10x on the issue listing the specific questions.
+3. If fnplanner can confidently resolve them: add `agent:fnplanner` label.
+4. If there's ANY ambiguity that fnplanner can't resolve with certainty: add `agent:fnrhombus` label — the human decides.
+
+### fnnitpick (QA agent) completed — PASS
+1. Remove `agent:fnnitpick` label.
+2. Add `agent:fnrhombus` label — the human reviews and merges.
+3. Comment as fnnitpick with the QA verdict.
+
+### fnnitpick (QA agent) completed — FAIL
+1. Remove `agent:fnnitpick` label.
+2. Add `agent:fn10x` label — back to the code agent with the QA findings.
+3. Comment as fnnitpick with the QA verdict and what needs fixing.
+
+### fnlmgtfy (research agent) completed
+1. Remove `agent:fnlmgtfy` label.
+2. Add `agent:fnplanner` label — planner synthesizes the findings.
+3. Comment as fnlmgtfy with research results.
+
+### fnplanner (plan agent) completed
+1. Remove `agent:fnplanner` label.
+2. Assign the next unblocked task(s) to the appropriate agent.
+
+### Any agent is blocked
+1. Remove the current agent label.
+2. Add `agent:fnrhombus` label — the human unblocks.
+3. Comment explaining what's blocking and why.
+
+## After routing — check for more work
+
+1. Check the dependency graph:
    - #1 → #2 → #3 → #4 → #5b → #6
    - #2 → #5a (parallel with #3)
-3. Assign the next unblocked task(s) by adding the appropriate `agent:` label:
-   ```bash
-   gh issue edit <N> --add-label "agent:fn10x" --repo fnrhombus/fntypescript
-   ```
-4. Move newly assigned tasks to "Up Next" on the project board.
-5. Comment on the issue as fnplanner explaining why it was assigned and what the dependencies are:
-   ```bash
-   GH_TOKEN=$(mise exec python -- python3 ~/.config/fnteam/gh-bot-token.py pm) gh issue comment <N> --body "..." --repo fnrhombus/fntypescript
-   ```
-6. Output the exit signal. If you just assigned new tasks, output:
+2. If you just assigned a new `agent:` label (not `agent:fnrhombus`), output:
    ```
    EXIT:READY
    ```
-   If nothing was unblocked and there's no more work, output:
+3. If the only assignment was `agent:fnrhombus` or nothing was assignable, output:
    ```
    EXIT:IDLE
    ```
-   **Do not loop. Do one task, reassign, then exit.**
+   **Do not loop. Do one task, route, then exit.**
 
 ## Bot → agent mapping
 
@@ -84,7 +111,8 @@ Switch to planner mode. As fnplanner:
 ## Rules
 
 - **Never start a task whose dependencies aren't done.** Check that prerequisite issues are closed first.
-- **Never guess.** If a spec is ambiguous, comment on the issue asking for clarification and move to the next task.
+- **Never guess.** If a spec is ambiguous, post questions on the issue and assign to `agent:fnplanner`. If fnplanner can't resolve with certainty, assign to `agent:fnrhombus`.
+- **`agent:fnrhombus` means the human.** Never pick up tasks with this label. Only assign it when human judgment is needed.
 - **One task at a time.** Do one task, reassign, output exit signal, stop.
 - **Always authenticate as the correct bot** for the agent you're running.
 - **Last line of output must always be `EXIT:READY` or `EXIT:IDLE`.** No exceptions. The hosting script depends on this.
