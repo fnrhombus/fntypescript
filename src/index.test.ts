@@ -88,20 +88,28 @@ describe("init", () => {
     expect(result).toEqual([]);
   });
 
-  it("info.config is stored and accessible without affecting behavior", async () => {
+  it("info.config is stored per closure without cross-contamination between create calls", async () => {
     const { default: init } = await import("./index.js");
     const plugin = init({ typescript: {} as typeof ts }) as PluginModule;
-    const config = { someOption: true };
-    const mockService = makeMockLanguageService();
-    const info = makeMockInfo({ languageService: mockService, config });
 
-    const proxy = plugin.create(info);
+    const mockServiceA = makeMockLanguageService();
+    const mockServiceB = makeMockLanguageService();
+    const infoA = makeMockInfo({ languageService: mockServiceA, config: { tag: "a" } });
+    const infoB = makeMockInfo({ languageService: mockServiceB, config: { tag: "b" } });
 
-    // Config doesn't affect basic delegation — proxy still works normally
-    (proxy as unknown as Record<string, (...a: unknown[]) => unknown>)[
+    const proxyA = plugin.create(infoA);
+    const proxyB = plugin.create(infoB);
+
+    (proxyA as unknown as Record<string, (...a: unknown[]) => unknown>)[
       "getQuickInfoAtPosition"
     ]("file.ts", 0);
+    (proxyB as unknown as Record<string, (...a: unknown[]) => unknown>)[
+      "getCompletionsAtPosition"
+    ]("file.ts", 0, {});
 
-    expect(mockService["getQuickInfoAtPosition"]).toHaveBeenCalledOnce();
+    expect(mockServiceA["getQuickInfoAtPosition"]).toHaveBeenCalledOnce();
+    expect(mockServiceB["getCompletionsAtPosition"]).toHaveBeenCalledOnce();
+    // Confirm no cross-contamination: A's method was not called on B's service
+    expect(mockServiceB["getQuickInfoAtPosition"]).not.toHaveBeenCalled();
   });
 });
