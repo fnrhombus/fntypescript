@@ -15,13 +15,13 @@ while true; do
     echo "=== Worker starting at $(date) ==="
 
     TMPFILE=$(mktemp)
-    claude --agent worker --print --verbose --output-format stream-json 2>&1 \
+    claude --agent worker --print --verbose --output-format stream-json --permission-mode bypassPermissions 2>&1 \
         | tee "$TMPFILE" \
-        | python3 "$FORMATTER"
+        | mise exec python -- python3 "$FORMATTER"
 
     # Parse exit signal from the raw JSON result
     LAST_RESULT=$(grep '"type":"result"' "$TMPFILE" | tail -1)
-    EXIT_SIGNAL=$(echo "$LAST_RESULT" | python3 -c "
+    EXIT_SIGNAL=$(echo "$LAST_RESULT" | mise exec python -- python3 -c "
 import sys, json
 try:
     d = json.load(sys.stdin)

@@ -68,9 +68,14 @@ for line in sys.stdin:
 
     elif t == "user":
         result = msg.get("tool_use_result", {})
+        if isinstance(result, str):
+            result = {"stdout": result}
         stdout = result.get("stdout", "")
         stderr = result.get("stderr", "")
-        is_error = result.get("is_error", False) or msg.get("message", {}).get("content", [{}])[0].get("is_error", False)
+        is_error = result.get("is_error", False)
+        content = msg.get("message", {}).get("content", [])
+        if content and isinstance(content[0], dict):
+            is_error = is_error or content[0].get("is_error", False)
 
         if stderr and not stdout:
             print(f"  {RED}✗ {truncate(stderr)}{RESET}")

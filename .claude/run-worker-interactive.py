@@ -79,13 +79,14 @@ def output_reader(proc):
 
         elif t == "user":
             result = msg.get("tool_use_result", {})
+            if isinstance(result, str):
+                result = {"stdout": result}
             stdout = result.get("stdout", "")
             stderr = result.get("stderr", "")
             is_error = result.get("is_error", False)
-            if not is_error:
-                content = msg.get("message", {}).get("content", [])
-                if content and isinstance(content[0], dict):
-                    is_error = content[0].get("is_error", False)
+            content = msg.get("message", {}).get("content", [])
+            if content and isinstance(content[0], dict):
+                is_error = is_error or content[0].get("is_error", False)
 
             if stderr and not stdout:
                 print(f"  {RED}✗ {truncate(stderr)}{RESET}")
@@ -141,6 +142,7 @@ def run_worker():
         "--print", "--verbose",
         "--input-format", "stream-json",
         "--output-format", "stream-json",
+        "--permission-mode", "bypassPermissions",
     ]
 
     proc = subprocess.Popen(
