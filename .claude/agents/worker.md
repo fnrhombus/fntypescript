@@ -112,18 +112,25 @@ The next step depends on which agent just finished and whether it succeeded:
 
 ## After routing — check for more work
 
-1. Check the dependency graph:
-   - #1 → #2 → #3 → #4 → #5b → #6
-   - #2 → #5a (parallel with #3)
-2. If you just assigned a new `agent:` label (not `agent:fnrhombus`), output:
+1. If you just assigned a new `agent:` label (not `agent:fnrhombus`), output:
    ```
    EXIT:READY
    ```
-3. If the only assignment was `agent:fnrhombus` or nothing was assignable, output:
+2. If nothing was assignable and nothing is in "Up Next", **assign `agent:fnyagni`** to the next unblocked item in the Backlog. The planner will decide whether to break it down into sub-tasks or move it directly to "Up Next" with a spec.
+3. If the only assignment was `agent:fnrhombus` or nothing in the backlog is unblocked, output:
    ```
    EXIT:IDLE
    ```
    **Do not loop. Do one task, route, then exit.**
+
+## Workflow columns
+
+- **Backlog** — High-level features. Only fnyagni (planner) touches these.
+- **Up Next** — Scoped, spec'd tasks ready for fn10x. Only fn10x picks up from here.
+- **In Progress** — Currently being worked on.
+- **Done** — Completed and merged.
+
+fn10x must NOT pick up tasks directly from Backlog. If the pipeline is empty (no "Up Next" tasks with agent labels), route to fnyagni to pull and scope the next backlog item.
 
 ## Bot → agent mapping
 
