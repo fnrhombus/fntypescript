@@ -41,7 +41,7 @@ function makeMockInfo(
 describe("init", () => {
   it("returns an object with create and getExternalFiles functions", async () => {
     const { default: init } = await import("./index.js");
-    const plugin = init({ typescript: {} as typeof ts }) as PluginModule;
+    const plugin = init({ typescript: {} as typeof ts }) as unknown as PluginModule;
 
     expect(typeof plugin.create).toBe("function");
     expect(typeof plugin.getExternalFiles).toBe("function");
@@ -49,7 +49,7 @@ describe("init", () => {
 
   it("create returns a LanguageService proxy with callable methods", async () => {
     const { default: init } = await import("./index.js");
-    const plugin = init({ typescript: {} as typeof ts }) as PluginModule;
+    const plugin = init({ typescript: {} as typeof ts }) as unknown as PluginModule;
     const mockService = makeMockLanguageService();
     const info = makeMockInfo({ languageService: mockService });
 
@@ -64,7 +64,7 @@ describe("init", () => {
 
   it("create proxy passes return values from the base service through", async () => {
     const { default: init } = await import("./index.js");
-    const plugin = init({ typescript: {} as typeof ts }) as PluginModule;
+    const plugin = init({ typescript: {} as typeof ts }) as unknown as PluginModule;
     const returnValue = { entries: [{ name: "bar" }] };
     const mockService = makeMockLanguageService({
       getCompletionsAtPosition: vi.fn().mockReturnValue(returnValue),
@@ -81,35 +81,39 @@ describe("init", () => {
 
   it("getExternalFiles returns an empty array", async () => {
     const { default: init } = await import("./index.js");
-    const plugin = init({ typescript: {} as typeof ts }) as PluginModule;
+    const plugin = init({ typescript: {} as typeof ts }) as unknown as PluginModule;
 
     const result = plugin.getExternalFiles({} as ts.server.Project);
 
     expect(result).toEqual([]);
   });
 
-  it("info.config is stored per closure without cross-contamination between create calls", async () => {
+  it("info.config is stored and retrievable via getStoredConfig", async () => {
     const { default: init } = await import("./index.js");
-    const plugin = init({ typescript: {} as typeof ts }) as PluginModule;
+    const plugin = init({ typescript: {} as typeof ts }) as PluginModule & {
+      getStoredConfig: (proxy: ts.LanguageService) => unknown;
+    };
+    const config = { tag: "stored" };
+    const info = makeMockInfo({ config });
 
-    const mockServiceA = makeMockLanguageService();
-    const mockServiceB = makeMockLanguageService();
-    const infoA = makeMockInfo({ languageService: mockServiceA, config: { tag: "a" } });
-    const infoB = makeMockInfo({ languageService: mockServiceB, config: { tag: "b" } });
+    const proxy = plugin.create(info);
+
+    expect(plugin.getStoredConfig(proxy)).toBe(config);
+  });
+
+  it("info.config is stored per proxy without cross-contamination between create calls", async () => {
+    const { default: init } = await import("./index.js");
+    const plugin = init({ typescript: {} as typeof ts }) as PluginModule & {
+      getStoredConfig: (proxy: ts.LanguageService) => unknown;
+    };
+
+    const infoA = makeMockInfo({ config: { tag: "a" } });
+    const infoB = makeMockInfo({ config: { tag: "b" } });
 
     const proxyA = plugin.create(infoA);
     const proxyB = plugin.create(infoB);
 
-    (proxyA as unknown as Record<string, (...a: unknown[]) => unknown>)[
-      "getQuickInfoAtPosition"
-    ]("file.ts", 0);
-    (proxyB as unknown as Record<string, (...a: unknown[]) => unknown>)[
-      "getCompletionsAtPosition"
-    ]("file.ts", 0, {});
-
-    expect(mockServiceA["getQuickInfoAtPosition"]).toHaveBeenCalledOnce();
-    expect(mockServiceB["getCompletionsAtPosition"]).toHaveBeenCalledOnce();
-    // Confirm no cross-contamination: A's method was not called on B's service
-    expect(mockServiceB["getQuickInfoAtPosition"]).not.toHaveBeenCalled();
+    expect(plugin.getStoredConfig(proxyA)).toEqual({ tag: "a" });
+    expect(plugin.getStoredConfig(proxyB)).toEqual({ tag: "b" });
   });
 });
