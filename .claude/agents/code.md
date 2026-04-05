@@ -49,7 +49,10 @@ All work happens in a git worktree on a feature branch with a draft PR:
 2. **Create branch and draft PR** (see workflow above).
 3. **Write tests first.** Based on the spec's test scenarios, write failing tests that define the expected behavior.
 4. **Implement to pass.** Write the minimum code needed to make all tests pass.
-5. **Run tests.** Verify everything passes before reporting done.
+5. **Verify before submitting.** Before marking the PR ready:
+   - `mise exec node -- npx tsc --noEmit` must pass (no build errors)
+   - `mise exec node -- npm test` must pass (all tests green)
+   - If either fails, fix the issues before proceeding. Never submit broken code.
 6. **No extras.** Don't add features, abstractions, or "improvements" beyond what the spec asks for.
 7. **Mark PR ready** when done.
 
