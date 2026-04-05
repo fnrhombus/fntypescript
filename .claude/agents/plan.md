@@ -23,7 +23,7 @@ This project may be worked on by multiple independent Claude Code sessions, each
 
 ## Bot identity
 
-When commenting on issues or PRs, authenticate as **fnarchitect**:
+When commenting on issues or PRs, authenticate as **fnyagni**:
 ```bash
 GH_TOKEN=$(mise exec python -- python3 ~/.config/fnteam/gh-bot-token.py pm) gh issue comment <N> --body "message" --repo fnrhombus/fntypescript
 ```
