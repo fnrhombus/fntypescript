@@ -8,6 +8,11 @@ A general-purpose TypeScript Language Service plugin framework — stable extens
 - **No guessing** — If you don't know what to do, or encounter an error you don't immediately understand, do a brief web search before trying anything. Only after research may you begin experimenting.
 - **No speculative creation** — Never create files, features, or structures you aren't sure about. If there's any uncertainty about what to make, ask the user first.
 
+## Environment
+
+- **Node/npm require mise** — `node` and `npm` are NOT on the system PATH. Always use `mise exec node -- npm test`, `mise exec node -- npx vitest run`, etc. A `.mise.toml` is in the project root. Never use bare `npm`, `node`, or `npx` commands.
+- **Python requires mise** — Same for Python: `mise exec python -- python3 ...`
+
 ## Project Coordination
 
 - **GitHub Project is the source of truth.** All work is tracked in the fnrhombus/fntypescript GitHub Project.
