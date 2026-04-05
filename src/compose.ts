@@ -23,7 +23,7 @@ export function composeHook<TArgs extends any[], TResult>(
   baseMethod: (...args: TArgs) => TResult,
   plugins: Plugin[],
   hookName: keyof PluginDefinition,
-  makeContext: () => HookContext,
+  makeContext: (args: TArgs) => HookContext,
 ): (...args: TArgs) => TResult {
   const activePlugins = plugins.filter(
     (p) => typeof p.definition[hookName] === "function",
@@ -34,11 +34,11 @@ export function composeHook<TArgs extends any[], TResult>(
   }
 
   return function (...args: TArgs): TResult {
-    const ctx = makeContext();
+    const ctx = makeContext(args);
     let prior = baseMethod(...args);
 
     for (const plugin of activePlugins) {
-      const hook = plugin.definition[hookName] as (
+      const hook = plugin.definition[hookName] as unknown as (
         ctx: HookContext,
         prior: TResult,
         ...args: TArgs

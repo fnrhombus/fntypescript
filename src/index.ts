@@ -2,9 +2,7 @@ import type ts from "typescript/lib/tsserverlibrary";
 import { createLanguageServiceProxy } from "./proxy.js";
 import { composeHook, createPluginLogger } from "./compose.js";
 import type { Plugin, PluginDefinition } from "./types.js";
-
-export type { HookContext, PluginDefinition, Plugin } from "./types.js";
-export { definePlugin } from "./define-plugin.js";
+import { definePlugin } from "./define-plugin.js";
 
 let _typescript: typeof import("typescript/lib/tsserverlibrary");
 
@@ -45,8 +43,9 @@ function init(
         bound,
         plugins,
         hookName,
-        () => ({
-          fileName: "",
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (args: any[]) => ({
+          fileName: typeof args[0] === "string" ? args[0] : "",
           languageService: info.languageService,
           typescript: _typescript,
           project: info.project,
@@ -75,4 +74,17 @@ function init(
   return { create, getExternalFiles, getStoredConfig };
 }
 
-export default init;
+// Attach definePlugin so it is accessible as init.definePlugin when loaded via
+// require() (the tsserver plugin loading path). Namespace merging below
+// declares the type for TypeScript consumers.
+init.definePlugin = definePlugin;
+
+// Namespace merging exposes types and definePlugin to TypeScript consumers that
+// import this module with `import init = require("fntypescript")` or equivalent.
+namespace init {
+  export type HookContext = import("./types.js").HookContext;
+  export type PluginDefinition = import("./types.js").PluginDefinition;
+  export type Plugin = import("./types.js").Plugin;
+}
+
+export = init;
