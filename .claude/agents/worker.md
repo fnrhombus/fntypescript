@@ -62,8 +62,13 @@ The next step depends on which agent just finished and whether it succeeded:
 
 ### fnnitpick (QA agent) completed — PASS
 1. Remove `agent:fnnitpick` label.
-2. Add `agent:fnrhombus` label — the human reviews and merges.
-3. Comment as fnnitpick with the QA verdict.
+2. Approve the PR and request your review as fnnitpick:
+   ```bash
+   GH_TOKEN=$(mise exec python -- python3 ~/.config/fnteam/gh-bot-token.py qa) gh pr review <PR> --approve --body "QA passed. <verdict summary>" --repo fnrhombus/fntypescript
+   gh pr edit <PR> --add-reviewer fnrhombus --repo fnrhombus/fntypescript
+   gh pr merge <PR> --auto --squash --repo fnrhombus/fntypescript
+   ```
+3. Auto-merge will trigger once you approve. Add `agent:fnrhombus` label so you know it needs your review.
 
 ### fnnitpick (QA agent) completed — FAIL
 1. Remove `agent:fnnitpick` label.
