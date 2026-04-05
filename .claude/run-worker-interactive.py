@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Interactive worker wrapper: streams colorized output while accepting user input.
 
-Task claiming happens HERE (not in the LLM) using a file lock to prevent races
-between concurrent workers.
+Task claiming uses labels (quick visibility) + issue comments (distributed lock).
+File lock prevents local races; comment protocol prevents cross-machine races.
 """
 
 import subprocess
@@ -14,6 +14,12 @@ import signal
 import fcntl
 import time
 import random
+
+# Human-readable worker names
+WORKER_NAMES = [
+    "alice", "bob", "carol", "dave", "eve", "frank", "grace", "heidi",
+    "ivan", "judy", "karl", "luna", "mike", "nora", "oscar", "penny",
+]
 
 # ANSI colors
 DIM = "\033[2m"
@@ -30,11 +36,60 @@ WHITE_ON_BLUE = "\033[97;44m"
 LOCK_FILE = "/tmp/fntypescript-worker.lock"
 REPO = "fnrhombus/fntypescript"
 
+# Generate a persistent worker ID for this process lifetime
+WORKER_ID = f"{random.choice(WORKER_NAMES)}-{random.randint(10000, 99999)}"
+
 exit_signal = None
 
 
+def gh_comment(issue_num, body):
+    """Post a comment on an issue."""
+    subprocess.run(
+        ["gh", "issue", "comment", str(issue_num), "--body", body, "--repo", REPO],
+        capture_output=True, text=True, timeout=30
+    )
+
+
+def check_claim_won(issue_num):
+    """Check if our CLAIM comment is the first one after the last RELEASE.
+
+    Returns True if we won the claim, False if someone else claimed first.
+    """
+    result = subprocess.run(
+        ["gh", "issue", "view", str(issue_num), "--repo", REPO,
+         "--json", "comments", "--jq",
+         '.comments | map(select(.body | startswith("CLAIM ") or startswith("RELEASE "))) | .[-5:] | .[] | .body'],
+        capture_output=True, text=True, timeout=30
+    )
+
+    if result.returncode != 0:
+        return False
+
+    lines = [l.strip() for l in result.stdout.strip().split("\n") if l.strip()]
+
+    # Walk backwards from the end to find the claim state
+    our_claim_seen = False
+    for line in reversed(lines):
+        if line == f"CLAIM {WORKER_ID}":
+            our_claim_seen = True
+        elif line.startswith("CLAIM ") and our_claim_seen:
+            # Someone else also claimed — they were earlier, we lose
+            return False
+        elif line.startswith("RELEASE "):
+            # We hit a release boundary — if we've seen our claim, we win
+            break
+
+    return our_claim_seen
+
+
 def claim_task():
-    """Atomically scan for and claim a task using a file lock.
+    """Scan for tasks, claim one using labels + comment protocol.
+
+    Flow:
+    1. File lock prevents local races (same machine)
+    2. Post CLAIM comment on issue (distributed lock)
+    3. Wait, then verify our claim was first (cross-machine)
+    4. Remove agent: label (quick visibility for humans)
 
     Returns (issue_number, agent_label) or (None, None) if no work available.
     """
@@ -60,7 +115,6 @@ def claim_task():
         for line in result.stdout.strip().split("\n"):
             try:
                 task = json.loads(line)
-                # Skip tasks assigned to the human
                 if task.get("agent") == "agent:fnrhombus":
                     continue
                 tasks.append(task)
@@ -70,22 +124,35 @@ def claim_task():
         if not tasks:
             return None, None
 
-        # Sort by priority (P0 first)
         tasks.sort(key=lambda t: t.get("priority", "P9"))
-        chosen = tasks[0]
 
-        # Claim it: remove the agent: label
-        agent_label = chosen["agent"]
-        issue_num = chosen["number"]
+        # Try to claim each task in priority order
+        for chosen in tasks:
+            agent_label = chosen["agent"]
+            issue_num = chosen["number"]
 
-        subprocess.run(
-            ["gh", "issue", "edit", str(issue_num), "--remove-label", agent_label,
-             "--repo", REPO],
-            capture_output=True, text=True, timeout=30
-        )
+            # Post claim comment
+            gh_comment(issue_num, f"CLAIM {WORKER_ID}")
 
-        print(f"{GREEN}Claimed #{issue_num}: {chosen.get('title', '?')} ({agent_label}){RESET}")
-        return issue_num, agent_label
+            # Wait for any concurrent claims to land
+            time.sleep(3)
+
+            # Verify we won
+            if not check_claim_won(issue_num):
+                print(f"{YELLOW}Lost claim on #{issue_num} to another worker, trying next...{RESET}")
+                continue
+
+            # We won — remove the label
+            subprocess.run(
+                ["gh", "issue", "edit", str(issue_num), "--remove-label", agent_label,
+                 "--repo", REPO],
+                capture_output=True, text=True, timeout=30
+            )
+
+            print(f"{GREEN}[{WORKER_ID}] Claimed #{issue_num}: {chosen.get('title', '?')} ({agent_label}){RESET}")
+            return issue_num, agent_label
+
+        return None, None
 
     except Exception as e:
         print(f"{RED}Error claiming task: {e}{RESET}")
@@ -93,6 +160,11 @@ def claim_task():
     finally:
         fcntl.flock(lock_fd, fcntl.LOCK_UN)
         lock_fd.close()
+
+
+def release_task(issue_num, reason="done"):
+    """Post a RELEASE comment on an issue."""
+    gh_comment(issue_num, f"RELEASE {WORKER_ID} — {reason}")
 
 
 def format_tool_input(name, inp):
@@ -242,6 +314,7 @@ def run_worker():
             "content": (
                 f"Task already claimed for you: issue #{issue_num} (was {agent_label}). "
                 f"The {agent_label} label has already been removed. "
+                f"Worker ID: {WORKER_ID}. "
                 f"Skip the startup scan and claiming steps — go straight to execution. "
                 f"Read the issue spec and begin work."
             )
@@ -259,6 +332,9 @@ def run_worker():
 
     proc.wait()
     out_thread.join(timeout=5)
+
+    # Release the task (the worker should have re-labeled it, but post RELEASE for the protocol)
+    release_task(issue_num, "worker session ended")
 
     return exit_signal
 
