@@ -1,10 +1,29 @@
-import { describe, it, expect, vi } from "vitest";
+/**
+ * Tests for the composition engine and plugin logger behavior, exercised
+ * through the create() path rather than testing internals directly.
+ */
+import { describe, it, expect, vi, beforeAll } from "vitest";
 import type ts from "typescript/lib/tsserverlibrary";
-import { composeHook, createPluginLogger } from "./compose.js";
 import { definePlugin } from "./define-plugin.js";
 import type { HookContext, Plugin } from "./types.js";
 
-function makeMockLogger(): ts.server.Logger {
+type InitModule = {
+  create: (info: ts.server.PluginCreateInfo, plugins: Plugin[]) => ts.LanguageService;
+};
+
+let _init: InitModule;
+
+beforeAll(async () => {
+  const mod = await import("./index.js");
+  const init = (mod as unknown as { default: (m: { typescript: typeof ts }) => InitModule }).default;
+  _init = init({ typescript: {} as typeof ts });
+});
+
+function getInit(): InitModule {
+  return _init;
+}
+
+function makeMockServerLogger() {
   return {
     info: vi.fn(),
     msg: vi.fn(),
@@ -15,21 +34,6 @@ function makeMockLogger(): ts.server.Logger {
     endGroup: vi.fn(),
     getLogFileName: vi.fn().mockReturnValue(undefined),
   } as unknown as ts.server.Logger;
-}
-
-function makeMockContext(overrides: Partial<HookContext> = {}): HookContext {
-  return {
-    fileName: "file.ts",
-    languageService: {} as ts.LanguageService,
-    typescript: {} as typeof ts,
-    project: {} as ts.server.Project,
-    config: {},
-    logger: {
-      info: vi.fn(),
-      error: vi.fn(),
-    },
-    ...overrides,
-  };
 }
 
 function makeDiag(message: string): ts.Diagnostic {
@@ -43,44 +47,85 @@ function makeDiag(message: string): ts.Diagnostic {
   } as ts.Diagnostic;
 }
 
-describe("composeHook", () => {
-  it("returns baseMethod directly when no plugins define the hook", () => {
-    const base = vi.fn().mockReturnValue([]);
-    const ctx = makeMockContext();
-    const composed = composeHook(base, [], "getSemanticDiagnostics", () => ctx);
-    expect(composed).toBe(base);
+function makeMockInfo(
+  overrides: {
+    semanticDiags?: ts.Diagnostic[];
+    completions?: ts.CompletionInfo;
+    config?: Record<string, unknown>;
+    serverLogger?: ts.server.Logger;
+  } = {},
+): ts.server.PluginCreateInfo {
+  const serverLogger = overrides.serverLogger ?? makeMockServerLogger();
+  const baseDiags = overrides.semanticDiags ?? [];
+  const baseCompletions = overrides.completions ?? { entries: [], isGlobalCompletion: false, isMemberCompletion: false, isNewIdentifierLocation: false };
+
+  return {
+    languageService: {
+      getSemanticDiagnostics: vi.fn().mockReturnValue(baseDiags),
+      getCompletionsAtPosition: vi.fn().mockReturnValue(baseCompletions),
+      dispose: vi.fn(),
+    } as unknown as ts.LanguageService,
+    config: overrides.config ?? {},
+    project: {
+      projectService: {
+        logger: serverLogger,
+      },
+    } as unknown as ts.server.Project,
+    serverHost: {} as ts.server.ServerHost,
+    languageServiceHost: {} as ts.LanguageServiceHost,
+  };
+}
+
+function callSemanticDiags(proxy: ts.LanguageService, fileName = "file.ts"): ts.Diagnostic[] {
+  return (proxy as unknown as Record<string, (...a: unknown[]) => ts.Diagnostic[]>)
+    ["getSemanticDiagnostics"](fileName);
+}
+
+function callCompletions(proxy: ts.LanguageService, fileName = "file.ts", position = 0): ts.CompletionInfo {
+  return (proxy as unknown as Record<string, (...a: unknown[]) => ts.CompletionInfo>)
+    ["getCompletionsAtPosition"](fileName, position, undefined);
+}
+
+describe("composition via create()", () => {
+  it("returns base result unchanged when no plugins provided", () => {
+    const init = getInit();
+    const baseDiag = makeDiag("base");
+    const info = makeMockInfo({ semanticDiags: [baseDiag] });
+    const proxy = init.create(info, []);
+    const result = callSemanticDiags(proxy);
+    expect(result).toEqual([baseDiag]);
   });
 
   it("returns base result unchanged when plugin does not define the hook", () => {
+    const init = getInit();
     const baseDiag = makeDiag("base");
-    const base = vi.fn().mockReturnValue([baseDiag]);
-    const ctx = makeMockContext();
+    const info = makeMockInfo({ semanticDiags: [baseDiag] });
     const plugin = definePlugin({ name: "no-hook" });
-    const composed = composeHook(base, [plugin], "getSemanticDiagnostics", () => ctx);
-    const result = composed("file.ts");
+    const proxy = init.create(info, [plugin]);
+    const result = callSemanticDiags(proxy);
     expect(result).toEqual([baseDiag]);
   });
 
   it("single plugin with getSemanticDiagnostics appends its diagnostic", () => {
+    const init = getInit();
     const baseDiag = makeDiag("base");
     const pluginDiag = makeDiag("plugin");
-    const base = vi.fn().mockReturnValue([baseDiag]);
-    const ctx = makeMockContext();
+    const info = makeMockInfo({ semanticDiags: [baseDiag] });
     const plugin = definePlugin({
       name: "appender",
       getSemanticDiagnostics: (_ctx, prior, _fileName) => [...prior, pluginDiag],
     });
-    const composed = composeHook(base, [plugin], "getSemanticDiagnostics", () => ctx);
-    const result = composed("file.ts");
+    const proxy = init.create(info, [plugin]);
+    const result = callSemanticDiags(proxy);
     expect(result).toEqual([baseDiag, pluginDiag]);
   });
 
   it("two plugins with the same hook compose in order (base + X + Y)", () => {
+    const init = getInit();
     const baseDiag = makeDiag("base");
     const xDiag = makeDiag("x");
     const yDiag = makeDiag("y");
-    const base = vi.fn().mockReturnValue([baseDiag]);
-    const ctx = makeMockContext();
+    const info = makeMockInfo({ semanticDiags: [baseDiag] });
     const pluginX = definePlugin({
       name: "x",
       getSemanticDiagnostics: (_ctx, prior, _fileName) => [...prior, xDiag],
@@ -89,29 +134,32 @@ describe("composeHook", () => {
       name: "y",
       getSemanticDiagnostics: (_ctx, prior, _fileName) => [...prior, yDiag],
     });
-    const composed = composeHook(base, [pluginX, pluginY], "getSemanticDiagnostics", () => ctx);
-    const result = composed("file.ts");
+    const proxy = init.create(info, [pluginX, pluginY]);
+    const result = callSemanticDiags(proxy);
     expect(result).toEqual([baseDiag, xDiag, yDiag]);
   });
 
   it("plugin with only getCompletionsAtPosition does not affect getSemanticDiagnostics", () => {
+    const init = getInit();
     const baseDiag = makeDiag("base");
-    const base = vi.fn().mockReturnValue([baseDiag]);
-    const ctx = makeMockContext();
+    const info = makeMockInfo({ semanticDiags: [baseDiag] });
     const plugin = definePlugin({
       name: "completions-only",
       getCompletionsAtPosition: (_ctx, prior) => prior,
     });
-    const composed = composeHook(base, [plugin], "getSemanticDiagnostics", () => ctx);
-    const result = composed("file.ts");
+    const proxy = init.create(info, [plugin]);
+    const result = callSemanticDiags(proxy);
     expect(result).toEqual([baseDiag]);
   });
 
   it("two plugins with different hooks each work independently", () => {
+    const init = getInit();
     const baseDiag = makeDiag("base");
     const pluginDiag = makeDiag("semantic");
     const baseCompletions = { entries: [], isGlobalCompletion: false, isMemberCompletion: false, isNewIdentifierLocation: false };
     const pluginCompletions = { entries: [{ name: "extra" } as ts.CompletionEntry], isGlobalCompletion: false, isMemberCompletion: false, isNewIdentifierLocation: false };
+
+    const info = makeMockInfo({ semanticDiags: [baseDiag], completions: baseCompletions });
 
     const pluginA = definePlugin({
       name: "a",
@@ -122,93 +170,66 @@ describe("composeHook", () => {
       getCompletionsAtPosition: (_ctx, _prior) => pluginCompletions,
     });
 
-    const ctx = makeMockContext();
-    const diagBase = vi.fn().mockReturnValue([baseDiag]);
-    const completionsBase = vi.fn().mockReturnValue(baseCompletions);
-
-    const composedDiags = composeHook(diagBase, [pluginA, pluginB], "getSemanticDiagnostics", () => ctx);
-    const composedCompletions = composeHook(completionsBase, [pluginA, pluginB], "getCompletionsAtPosition", () => ctx);
-
-    expect(composedDiags("file.ts")).toEqual([baseDiag, pluginDiag]);
-    expect(composedCompletions("file.ts", 0, undefined)).toBe(pluginCompletions);
+    const proxy = init.create(info, [pluginA, pluginB]);
+    expect(callSemanticDiags(proxy)).toEqual([baseDiag, pluginDiag]);
+    expect(callCompletions(proxy)).toBe(pluginCompletions);
   });
 
-  it("hook receives correct context (fileName, languageService, typescript, config, logger)", () => {
-    const receivedCtx: HookContext[] = [];
-    const base = vi.fn().mockReturnValue([]);
-    const mockLanguageService = { dispose: vi.fn() } as unknown as ts.LanguageService;
-    const mockTs = {} as typeof ts;
-    const mockProject = {} as ts.server.Project;
-    const mockConfig = { key: "value" };
-    const ctx = makeMockContext({
-      fileName: "ctx-test.ts",
-      languageService: mockLanguageService,
-      typescript: mockTs,
-      project: mockProject,
-      config: mockConfig,
-    });
+  it("hook receives correct fileName from the call arguments", () => {
+    const init = getInit();
+    const receivedFileNames: string[] = [];
+    const info = makeMockInfo();
     const plugin = definePlugin({
-      name: "ctx-checker",
-      getSemanticDiagnostics: (hookCtx, prior) => {
-        receivedCtx.push(hookCtx);
+      name: "filename-checker",
+      getSemanticDiagnostics: (ctx, prior, _fileName) => {
+        receivedFileNames.push(ctx.fileName);
         return prior;
       },
     });
-    const composed = composeHook(base, [plugin], "getSemanticDiagnostics", () => ctx);
-    composed("ctx-test.ts");
+    const proxy = init.create(info, [plugin]);
+    callSemanticDiags(proxy, "my-special-file.ts");
+    expect(receivedFileNames).toEqual(["my-special-file.ts"]);
+  });
 
-    expect(receivedCtx).toHaveLength(1);
-    expect(receivedCtx[0].fileName).toBe("ctx-test.ts");
-    expect(receivedCtx[0].languageService).toBe(mockLanguageService);
-    expect(receivedCtx[0].typescript).toBe(mockTs);
-    expect(receivedCtx[0].project).toBe(mockProject);
-    expect(receivedCtx[0].config).toBe(mockConfig);
-    expect(receivedCtx[0].logger).toBeDefined();
+  it("hook receives correct languageService, typescript, and project in context", () => {
+    const init = getInit();
+    const received: Partial<HookContext>[] = [];
+    const info = makeMockInfo();
+    const plugin = definePlugin({
+      name: "ctx-checker",
+      getSemanticDiagnostics: (ctx, prior) => {
+        received.push({ languageService: ctx.languageService, typescript: ctx.typescript, project: ctx.project });
+        return prior;
+      },
+    });
+    const proxy = init.create(info, [plugin]);
+    callSemanticDiags(proxy);
+    expect(received).toHaveLength(1);
+    expect(received[0].languageService).toBeDefined();
+    expect(received[0].typescript).toBeDefined();
+    expect(received[0].project).toBe(info.project);
   });
 
   it("hook that throws returns prior value without crashing", () => {
+    const init = getInit();
     const baseDiag = makeDiag("base");
-    const base = vi.fn().mockReturnValue([baseDiag]);
-    const logger = { info: vi.fn(), error: vi.fn() };
-    const ctx = makeMockContext({ logger });
+    const info = makeMockInfo({ semanticDiags: [baseDiag] });
     const plugin = definePlugin({
       name: "crasher",
       getSemanticDiagnostics: () => {
         throw new Error("hook exploded");
       },
     });
-    const composed = composeHook(base, [plugin], "getSemanticDiagnostics", () => ctx);
-    const result = composed("file.ts");
+    const proxy = init.create(info, [plugin]);
+    const result = callSemanticDiags(proxy);
     expect(result).toEqual([baseDiag]);
   });
 
-  it("logs an error when a hook throws", () => {
-    const base = vi.fn().mockReturnValue([]);
-    const logger = { info: vi.fn(), error: vi.fn() };
-    const ctx = makeMockContext({ logger });
-    const plugin = definePlugin({
-      name: "crasher",
-      getSemanticDiagnostics: () => {
-        throw new Error("hook exploded");
-      },
-    });
-    const composed = composeHook(base, [plugin], "getSemanticDiagnostics", () => ctx);
-    composed("file.ts");
-    expect(logger.error).toHaveBeenCalledOnce();
-  });
-
-  it("zero plugins returns base method directly (pure passthrough)", () => {
-    const base = vi.fn().mockReturnValue([]);
-    const ctx = makeMockContext();
-    const composed = composeHook(base, [], "getSemanticDiagnostics", () => ctx);
-    expect(composed).toBe(base);
-  });
-
   it("getCompletionsAtPosition hook receives all original args (ctx, prior, fileName, position, options)", () => {
+    const init = getInit();
     const receivedArgs: unknown[] = [];
     const baseCompletions = { entries: [], isGlobalCompletion: false, isMemberCompletion: false, isNewIdentifierLocation: false };
-    const base = vi.fn().mockReturnValue(baseCompletions);
-    const ctx = makeMockContext();
+    const info = makeMockInfo({ completions: baseCompletions });
     const plugin = definePlugin({
       name: "arg-checker",
       getCompletionsAtPosition: (hookCtx, prior, fileName, position, options) => {
@@ -216,9 +237,10 @@ describe("composeHook", () => {
         return prior;
       },
     });
-    const composed = composeHook(base, [plugin], "getCompletionsAtPosition", () => ctx);
+    const proxy = init.create(info, [plugin]);
     const opts = { triggerKind: 1 } as ts.GetCompletionsAtPositionOptions;
-    composed("check.ts", 42, opts);
+    (proxy as unknown as Record<string, (...a: unknown[]) => unknown>)
+      ["getCompletionsAtPosition"]("check.ts", 42, opts);
 
     expect(receivedArgs[1]).toBe(baseCompletions);
     expect(receivedArgs[2]).toBe("check.ts");
@@ -227,21 +249,150 @@ describe("composeHook", () => {
   });
 });
 
-describe("createPluginLogger", () => {
-  it("prefixes info messages with plugin name", () => {
-    const serverLogger = makeMockLogger();
-    const logger = createPluginLogger("my-plugin", serverLogger);
-    logger.info("hello");
-    expect(serverLogger.info).toHaveBeenCalledWith("[fntypescript:my-plugin] hello");
+describe("per-plugin context via create()", () => {
+  it("each plugin receives its own config slice from tsconfig plugins array", () => {
+    const init = getInit();
+    const receivedConfigs: Record<string, unknown>[] = [];
+    const config = {
+      plugins: [
+        { name: "plugin-a", optionA: true },
+        { name: "plugin-b", optionB: "hello" },
+      ],
+    };
+    const info = makeMockInfo({ config });
+    const pluginA = definePlugin({
+      name: "plugin-a",
+      getSemanticDiagnostics: (ctx, prior) => {
+        receivedConfigs.push({ plugin: "a", config: ctx.config });
+        return prior;
+      },
+    });
+    const pluginB = definePlugin({
+      name: "plugin-b",
+      getSemanticDiagnostics: (ctx, prior) => {
+        receivedConfigs.push({ plugin: "b", config: ctx.config });
+        return prior;
+      },
+    });
+    const proxy = init.create(info, [pluginA, pluginB]);
+    callSemanticDiags(proxy);
+
+    const configA = receivedConfigs.find((r) => r["plugin"] === "a")?.["config"] as Record<string, unknown>;
+    const configB = receivedConfigs.find((r) => r["plugin"] === "b")?.["config"] as Record<string, unknown>;
+    expect(configA?.["optionA"]).toBe(true);
+    expect(configB?.["optionB"]).toBe("hello");
   });
 
-  it("prefixes error messages with plugin name and ERROR:", () => {
-    const serverLogger = makeMockLogger();
-    const logger = createPluginLogger("my-plugin", serverLogger);
-    logger.error("something broke");
+  it("plugins do not share config — each gets only its own slice", () => {
+    const init = getInit();
+    const receivedConfigs: Record<string, Record<string, unknown>>[] = [];
+    const config = {
+      plugins: [
+        { name: "plugin-a", secret: "for-a-only" },
+        { name: "plugin-b", secret: "for-b-only" },
+      ],
+    };
+    const info = makeMockInfo({ config });
+    const pluginA = definePlugin({
+      name: "plugin-a",
+      getSemanticDiagnostics: (ctx, prior) => {
+        receivedConfigs.push({ a: ctx.config as Record<string, unknown> });
+        return prior;
+      },
+    });
+    const pluginB = definePlugin({
+      name: "plugin-b",
+      getSemanticDiagnostics: (ctx, prior) => {
+        receivedConfigs.push({ b: ctx.config as Record<string, unknown> });
+        return prior;
+      },
+    });
+    const proxy = init.create(info, [pluginA, pluginB]);
+    callSemanticDiags(proxy);
+
+    const configA = receivedConfigs.find((r) => "a" in r)?.["a"];
+    const configB = receivedConfigs.find((r) => "b" in r)?.["b"];
+    expect(configA?.["secret"]).toBe("for-a-only");
+    expect(configB?.["secret"]).toBe("for-b-only");
+    expect(configA).not.toBe(configB);
+  });
+});
+
+describe("plugin logger via create()", () => {
+  it("prefixes info messages with [fntypescript:pluginName]", () => {
+    const init = getInit();
+    const serverLogger = makeMockServerLogger();
+    const info = makeMockInfo({ serverLogger });
+    const plugin = definePlugin({
+      name: "my-plugin",
+      getSemanticDiagnostics: (ctx, prior) => {
+        ctx.logger.info("hello from plugin");
+        return prior;
+      },
+    });
+    const proxy = init.create(info, [plugin]);
+    callSemanticDiags(proxy);
+    expect(serverLogger.info).toHaveBeenCalledWith("[fntypescript:my-plugin] hello from plugin");
+  });
+
+  it("prefixes error messages with [fntypescript:pluginName] ERROR:", () => {
+    const init = getInit();
+    const serverLogger = makeMockServerLogger();
+    const info = makeMockInfo({ serverLogger });
+    const plugin = definePlugin({
+      name: "my-plugin",
+      getSemanticDiagnostics: (ctx, prior) => {
+        ctx.logger.error("something broke");
+        return prior;
+      },
+    });
+    const proxy = init.create(info, [plugin]);
+    callSemanticDiags(proxy);
     expect(serverLogger.msg).toHaveBeenCalledWith(
       "[fntypescript:my-plugin] ERROR: something broke",
-      expect.anything()
+      expect.anything(),
     );
+  });
+
+  it("logs an error with plugin name when a hook throws", () => {
+    const init = getInit();
+    const serverLogger = makeMockServerLogger();
+    const info = makeMockInfo({ serverLogger });
+    const plugin = definePlugin({
+      name: "crasher",
+      getSemanticDiagnostics: () => {
+        throw new Error("hook exploded");
+      },
+    });
+    const proxy = init.create(info, [plugin]);
+    callSemanticDiags(proxy);
+    expect(serverLogger.msg).toHaveBeenCalledOnce();
+    const [loggedMessage] = (serverLogger.msg as ReturnType<typeof vi.fn>).mock.calls[0] as [string, unknown];
+    expect(loggedMessage).toContain("[fntypescript:crasher]");
+    expect(loggedMessage).toContain("hook exploded");
+  });
+
+  it("different plugins get different logger prefixes", () => {
+    const init = getInit();
+    const serverLogger = makeMockServerLogger();
+    const info = makeMockInfo({ serverLogger });
+    const pluginA = definePlugin({
+      name: "plugin-a",
+      getSemanticDiagnostics: (ctx, prior) => {
+        ctx.logger.info("from a");
+        return prior;
+      },
+    });
+    const pluginB = definePlugin({
+      name: "plugin-b",
+      getSemanticDiagnostics: (ctx, prior) => {
+        ctx.logger.info("from b");
+        return prior;
+      },
+    });
+    const proxy = init.create(info, [pluginA, pluginB]);
+    callSemanticDiags(proxy);
+    expect(serverLogger.info).toHaveBeenCalledWith("[fntypescript:plugin-a] from a");
+    expect(serverLogger.info).toHaveBeenCalledWith("[fntypescript:plugin-b] from b");
   });
 });
