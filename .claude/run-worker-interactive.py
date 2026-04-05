@@ -51,14 +51,14 @@ def gh_comment(issue_num, body):
 
 
 def check_claim_won(issue_num):
-    """Check if our CLAIM comment is the first one after the last RELEASE.
+    """Check if our CLAIM is the most recent one (no competing claim posted after ours).
 
-    Returns True if we won the claim, False if someone else claimed first.
+    Returns True if we won the claim, False if someone else claimed after us.
     """
     result = subprocess.run(
         ["gh", "issue", "view", str(issue_num), "--repo", REPO,
          "--json", "comments", "--jq",
-         '.comments | map(select(.body | startswith("CLAIM ") or startswith("RELEASE "))) | .[-5:] | .[] | .body'],
+         '.comments | map(select(.body | startswith("CLAIM "))) | .[-3:] | .[] | .body'],
         capture_output=True, text=True, timeout=30
     )
 
@@ -67,19 +67,11 @@ def check_claim_won(issue_num):
 
     lines = [l.strip() for l in result.stdout.strip().split("\n") if l.strip()]
 
-    # Walk backwards from the end to find the claim state
-    our_claim_seen = False
-    for line in reversed(lines):
-        if line == f"CLAIM {WORKER_ID}":
-            our_claim_seen = True
-        elif line.startswith("CLAIM ") and our_claim_seen:
-            # Someone else also claimed — they were earlier, we lose
-            return False
-        elif line.startswith("RELEASE "):
-            # We hit a release boundary — if we've seen our claim, we win
-            break
+    # Simple rule: the LAST claim wins. If our claim is the most recent, we win.
+    if not lines:
+        return False
 
-    return our_claim_seen
+    return lines[-1] == f"CLAIM {WORKER_ID}"
 
 
 def claim_task():
