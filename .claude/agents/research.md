@@ -18,6 +18,14 @@ This project may be worked on by multiple independent Claude Code sessions. The 
 - **Post research findings** as comments on relevant issues when applicable
 - **Create issues** if research reveals work that needs to be done
 
+## Bot identity
+
+When commenting on issues or PRs, authenticate as **fnteam-docs-bot**:
+```bash
+GH_TOKEN=$(mise exec python -- python3 ~/.config/fnteam/gh-bot-token.py docs) gh issue comment <N> --body "message" --repo fnrhombus/fntypescript
+```
+Always use this token for GitHub API interactions so comments are clearly attributed to the research agent.
+
 ## What you do
 
 - Find and analyze prior art (existing plugins, frameworks, approaches)

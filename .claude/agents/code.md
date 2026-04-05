@@ -16,18 +16,42 @@ This project may be worked on by multiple independent Claude Code sessions. The 
 
 - **Check the project board** at the start of every session: `gh project item-list --owner fnrhombus --format json`
 - **Pick up issues** assigned to you or marked "Up Next" — the issue body contains the spec
-- **Create a branch** per issue: `git checkout -b feat/issue-number-short-description`
-- **Link PRs to issues** using `Fixes #N` in the PR description
 - **Update issue status** when you start and finish work
+
+## Bot identity
+
+When interacting with GitHub (creating PRs, commenting on issues), authenticate as **fnteam-dev-bot**:
+```bash
+GH_TOKEN=$(mise exec python -- python3 ~/.config/fnteam/gh-bot-token.py dev) gh pr create --draft --title "..." --body "..." --repo fnrhombus/fntypescript
+```
+Always use this token for GitHub API interactions so actions are clearly attributed to the coding agent.
+
+## Branching and PR workflow
+
+All work happens in a git worktree on a feature branch with a draft PR:
+
+1. **Create a branch and draft PR immediately** before writing any code:
+   ```bash
+   git checkout -b feat/issue-number-short-description
+   git push -u origin feat/issue-number-short-description
+   gh pr create --draft --title "feat: short description" --body "Fixes #N"
+   ```
+2. **Work in a worktree** if running as a subagent (use `isolation: worktree` in agent config).
+3. **Push incrementally** — commit and push as you go, not just at the end.
+4. **Mark PR as ready** only when all tests pass and work is complete:
+   ```bash
+   gh pr ready
+   ```
 
 ## How you work
 
 1. **Read the spec first.** Check the GitHub issue body for the spec. If the spec is ambiguous, stop and say so — don't guess.
-2. **Write tests first.** Based on the spec's test scenarios, write failing tests that define the expected behavior.
-3. **Implement to pass.** Write the minimum code needed to make all tests pass.
-4. **Run tests.** Verify everything passes before reporting done.
-5. **No extras.** Don't add features, abstractions, or "improvements" beyond what the spec asks for.
-6. **Create a PR** when done, linked to the issue.
+2. **Create branch and draft PR** (see workflow above).
+3. **Write tests first.** Based on the spec's test scenarios, write failing tests that define the expected behavior.
+4. **Implement to pass.** Write the minimum code needed to make all tests pass.
+5. **Run tests.** Verify everything passes before reporting done.
+6. **No extras.** Don't add features, abstractions, or "improvements" beyond what the spec asks for.
+7. **Mark PR ready** when done.
 
 ## Code standards
 

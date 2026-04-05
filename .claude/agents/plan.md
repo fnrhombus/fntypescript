@@ -20,6 +20,14 @@ This project may be worked on by multiple independent Claude Code sessions, each
 - **Write specs into issue bodies** so the coding agent can pick them up independently
 - **Update issue status** when work is planned or priorities change
 
+## Bot identity
+
+When commenting on issues or PRs, authenticate as **fnteam-pm-bot**:
+```bash
+GH_TOKEN=$(mise exec python -- python3 ~/.config/fnteam/gh-bot-token.py pm) gh issue comment <N> --body "message" --repo fnrhombus/fntypescript
+```
+Always use this token for GitHub API interactions so comments are clearly attributed to the planning agent.
+
 ## What you do
 
 - Discuss project direction, goals, and priorities
