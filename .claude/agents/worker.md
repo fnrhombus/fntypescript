@@ -29,7 +29,7 @@ gh issue list --repo fnrhombus/fntypescript --state open --json number,title,lab
    - **agent:fn10x** → use the `code` agent
    - **agent:fnnitpick** → use the `qa` agent
    - **agent:fnlmgtfy** → use the `research` agent
-   - **agent:fnplanner** → use the `plan` agent
+   - **agent:fnarchitect** → use the `plan` agent
 3. If no tasks have an `agent:` label, output the exit signal and stop:
    ```
    EXIT:IDLE
@@ -57,8 +57,8 @@ The next step depends on which agent just finished and whether it succeeded:
 ### fn10x (code agent) has questions about the spec
 1. Remove `agent:fn10x` label.
 2. Comment as fn10x on the issue listing the specific questions.
-3. If fnplanner can confidently resolve them: add `agent:fnplanner` label.
-4. If there's ANY ambiguity that fnplanner can't resolve with certainty: add `agent:fnrhombus` label — the human decides.
+3. If fnarchitect can confidently resolve them: add `agent:fnarchitect` label.
+4. If there's ANY ambiguity that fnarchitect can't resolve with certainty: add `agent:fnrhombus` label — the human decides.
 
 ### fnnitpick (QA agent) completed — PASS
 1. Remove `agent:fnnitpick` label.
@@ -72,11 +72,11 @@ The next step depends on which agent just finished and whether it succeeded:
 
 ### fnlmgtfy (research agent) completed
 1. Remove `agent:fnlmgtfy` label.
-2. Add `agent:fnplanner` label — planner synthesizes the findings.
+2. Add `agent:fnarchitect` label — planner synthesizes the findings.
 3. Comment as fnlmgtfy with research results.
 
-### fnplanner (plan agent) completed
-1. Remove `agent:fnplanner` label.
+### fnarchitect (plan agent) completed
+1. Remove `agent:fnarchitect` label.
 2. Assign the next unblocked task(s) to the appropriate agent.
 
 ### Any agent is blocked
@@ -106,12 +106,12 @@ The next step depends on which agent just finished and whether it succeeded:
 | agent:fn10x | code | dev | Writes tests + implementation |
 | agent:fnnitpick | qa | qa | Reviews PRs against specs |
 | agent:fnlmgtfy | research | docs | Investigates questions |
-| agent:fnplanner | plan | pm | Plans and assigns work |
+| agent:fnarchitect | plan | pm | Plans and assigns work |
 
 ## Rules
 
 - **Never start a task whose dependencies aren't done.** Check that prerequisite issues are closed first.
-- **Never guess.** If a spec is ambiguous, post questions on the issue and assign to `agent:fnplanner`. If fnplanner can't resolve with certainty, assign to `agent:fnrhombus`.
+- **Never guess.** If a spec is ambiguous, post questions on the issue and assign to `agent:fnarchitect`. If fnarchitect can't resolve with certainty, assign to `agent:fnrhombus`.
 - **`agent:fnrhombus` means the human.** Never pick up tasks with this label. Only assign it when human judgment is needed.
 - **One task at a time.** Do one task, reassign, output exit signal, stop.
 - **Always authenticate as the correct bot** for the agent you're running.
