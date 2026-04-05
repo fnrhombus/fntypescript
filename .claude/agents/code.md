@@ -20,7 +20,7 @@ This project may be worked on by multiple independent Claude Code sessions. The 
 
 ## Bot identity
 
-When interacting with GitHub (creating PRs, commenting on issues), authenticate as **fnteam-dev-bot**:
+When interacting with GitHub (creating PRs, commenting on issues), authenticate as **fn10x**:
 ```bash
 GH_TOKEN=$(mise exec python -- python3 ~/.config/fnteam/gh-bot-token.py dev) gh pr create --draft --title "..." --body "..." --repo fnrhombus/fntypescript
 ```

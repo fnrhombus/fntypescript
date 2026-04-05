@@ -20,7 +20,7 @@ This project may be worked on by multiple independent Claude Code sessions. The 
 
 ## Bot identity
 
-When commenting on issues or PRs, authenticate as **fnteam-docs-bot**:
+When commenting on issues or PRs, authenticate as **fnresearcher**:
 ```bash
 GH_TOKEN=$(mise exec python -- python3 ~/.config/fnteam/gh-bot-token.py docs) gh issue comment <N> --body "message" --repo fnrhombus/fntypescript
 ```
