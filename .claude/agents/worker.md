@@ -34,7 +34,7 @@ Within each tier, use P0 > P1 > P2.
 
 Determine the agent from the `agent:` label:
 - **agent:fn10x** → use the `code` agent
-- **agent:fnnitpick** → use the `qa` agent (rare — only for complex PRs needing spec review; CI handles build/test gating)
+- **agent:fnnitpick** → use the `qa` agent
 - **agent:fnlmgtfy** → use the `research` agent
 - **agent:fnyagni** → use the `plan` agent
 
@@ -100,16 +100,24 @@ The next step depends on which agent just finished and whether it succeeded:
 
 ### fn10x (code agent) completed successfully
 1. Remove `agent:fn10x` label.
-2. Comment as fn10x on the issue: what was done, link to the PR.
-3. Enable auto-merge and request human review:
+2. Add `agent:fnnitpick` label — QA reviews the PR.
+3. Comment as fn10x on the issue: what was done, link to the PR.
+
+### fnnitpick (QA agent) completed — PASS
+1. Remove `agent:fnnitpick` label.
+2. Approve and auto-merge the PR:
    ```bash
-   gh pr edit <PR> --add-reviewer fnrhombus --repo fnrhombus/fntypescript
+   GH_TOKEN=$(mise exec python -- python3 ~/.config/fnteam/gh-bot-token.py qa) gh pr review <PR> --approve --body "QA passed. <verdict summary>" --repo fnrhombus/fntypescript
    gh pr merge <PR> --auto --squash --repo fnrhombus/fntypescript
    ```
-4. Add `agent:fnrhombus` label so the human knows to review.
-5. Update the project board: set the issue to "Done".
+3. Update the project board: set the issue to "Done".
 
-CI (GitHub Actions) gates merging — runs build + tests automatically on every PR. No need to burn tokens on test runs.
+CI (GitHub Actions) gates merging — runs build + tests on every PR. QA handles spec review. No human review required unless an agent is unsure.
+
+### fnnitpick (QA agent) completed — FAIL
+1. Remove `agent:fnnitpick` label.
+2. Add `agent:fn10x` label — back to the code agent with the QA findings.
+3. Comment as fnnitpick with what needs fixing.
 
 ### fn10x (code agent) says the task is too large
 1. Remove `agent:fn10x` label.

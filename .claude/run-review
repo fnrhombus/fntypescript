@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+exec claude --agent plan --effort max --model opus --allow-dangerously-skip-permissions --ide \
+  -p "Check the GitHub project for all issues labeled agent:fnrhombus. These are issues waiting for my input. Show me a summary of each one (number, title, why it's waiting on me based on the last few comments), then offer to go through them one by one." \
+  "$@"
