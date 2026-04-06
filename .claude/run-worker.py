@@ -679,11 +679,22 @@ def cleanup_worktrees():
                     stale.append(current)
             current = {}
 
+    # Only clean worktrees that aren't owned by a currently running worker.
+    # Check if the worktree's lock file exists (git creates .lock while in use).
     for wt in stale:
         path = wt["path"]
         branch = wt.get("branch", "")
-        if VERBOSE:
-            log(f"Cleaning worktree: {path} ({branch})")
+
+        # Skip worktrees with active processes (check if any claude process has this path as cwd)
+        ps_check = subprocess.run(
+            ["fuser", path, "-s"], capture_output=True, timeout=10
+        )
+        if ps_check.returncode == 0:
+            if VERBOSE:
+                log(f"Worktree in use, skipping: {path}")
+            continue
+
+        log(f"Cleaning stale worktree: {path} ({branch})", DIM)
         subprocess.run(["git", "worktree", "remove", "--force", path],
                        capture_output=True, text=True, timeout=30)
         if branch and branch != "main":
