@@ -65,24 +65,18 @@ function findHandlerStringArg(
 
   function visit(node: ts.Node): void {
     if (result) return;
-
     if (
       ts.isStringLiteral(node) &&
       node.getStart(sourceFile) <= position &&
-      position <= node.getEnd()
+      position <= node.getEnd() &&
+      ts.isCallExpression(node.parent) &&
+      ts.isIdentifier(node.parent.expression) &&
+      node.parent.expression.text === "handler" &&
+      node.parent.arguments[0] === node
     ) {
-      const parent = node.parent;
-      if (
-        ts.isCallExpression(parent) &&
-        ts.isIdentifier(parent.expression) &&
-        parent.expression.text === "handler" &&
-        parent.arguments[0] === node
-      ) {
-        result = node;
-        return;
-      }
+      result = node;
+      return;
     }
-
     ts.forEachChild(node, visit);
   }
 
