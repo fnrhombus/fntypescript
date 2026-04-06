@@ -61,12 +61,35 @@ At startup, **before** looking for labeled tasks, check for orphaned tasks:
 
 If you find an orphan, reclaim it: add the appropriate `agent:` label back (infer from the last bot comment which agent was working on it), then let normal task selection pick it up.
 
+## Project board status
+
+**Always update the project board** when an issue changes state. Use this helper pattern:
+
+```bash
+# Get the item ID for an issue
+ITEM_ID=$(gh project item-list 4 --owner fnrhombus --format json --jq ".items[] | select(.content.number == <N>) | .id")
+
+# Set status (pick one option ID):
+#   Backlog:     1c08a291
+#   Up Next:     941b3c39
+#   In Progress: 620f5d53
+#   Done:        33c61586
+gh project item-edit --project-id PVT_kwHOACZSnM4BTvD0 --id "$ITEM_ID" --field-id PVTSSF_lAHOACZSnM4BTvD0zhA7-Rg --single-select-option-id <option-id>
+```
+
+When to update:
+- **Claiming a task** → set to "In Progress"
+- **Task completed & routed to next agent** → keep "In Progress" (still being worked)
+- **Issue closed** → set to "Done"
+- **New issue created** → add to project (`gh project item-add 4 --owner fnrhombus --url <url>`) and set to appropriate status
+
 ## Execution
 
 1. Read the full issue spec: `gh issue view <N> --repo fnrhombus/fntypescript`
-2. Spawn the appropriate agent using the Agent tool with `subagent_type` matching the agent name. Pass the full issue spec in the prompt. For the code agent, use `isolation: "worktree"` so it works on an isolated branch.
-3. Wait for the agent to complete.
-4. If the agent reports success, comment on the issue as the appropriate bot:
+2. **Update the project board**: set the issue to "In Progress".
+3. Spawn the appropriate agent using the Agent tool with `subagent_type` matching the agent name. Pass the full issue spec in the prompt. For the code agent, use `isolation: "worktree"` so it works on an isolated branch.
+4. Wait for the agent to complete.
+5. If the agent reports success, comment on the issue as the appropriate bot:
    ```bash
    GH_TOKEN=$(mise exec python -- python3 ~/.config/fnteam/gh-bot-token.py <bot>) gh issue comment <N> --body "Done." --repo fnrhombus/fntypescript
    ```
@@ -100,6 +123,7 @@ The next step depends on which agent just finished and whether it succeeded:
    gh pr merge <PR> --auto --squash --repo fnrhombus/fntypescript
    ```
 3. Auto-merge will trigger once you approve. Add `agent:fnrhombus` label so you know it needs your review.
+4. Update the project board: set the issue to "Done".
 
 ### fnnitpick (QA agent) completed — FAIL
 1. Remove `agent:fnnitpick` label.

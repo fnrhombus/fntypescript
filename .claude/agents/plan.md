@@ -22,8 +22,14 @@ This project may be worked on by multiple independent Claude Code sessions, each
   gh project item-add 4 --owner fnrhombus --url <issue-url>
   ```
   `gh issue create` only adds to the repo — it does NOT appear on the project board without this step.
+  After adding, **set the board status** to the correct column:
+  ```bash
+  ITEM_ID=$(gh project item-list 4 --owner fnrhombus --format json --jq ".items[] | select(.content.number == <N>) | .id")
+  # Backlog: 1c08a291 | Up Next: 941b3c39 | In Progress: 620f5d53 | Done: 33c61586
+  gh project item-edit --project-id PVT_kwHOACZSnM4BTvD0 --id "$ITEM_ID" --field-id PVTSSF_lAHOACZSnM4BTvD0zhA7-Rg --single-select-option-id <option-id>
+  ```
 - **Write specs into issue bodies** so the coding agent can pick them up independently
-- **Update issue status** when work is planned or priorities change
+- **Update issue status** when work is planned or priorities change — both the issue labels AND the project board column
 
 ## Bot identity
 
