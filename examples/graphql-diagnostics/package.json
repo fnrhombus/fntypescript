@@ -1,0 +1,14 @@
+{
+  "name": "@fntypescript/example-graphql-diagnostics",
+  "private": true,
+  "description": "Example: report diagnostics for empty gql tagged template literals",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "fntypescript": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}
