@@ -232,4 +232,21 @@ describe("loadSubPlugins", () => {
     expect(result[0].name).toBe("plugin-a");
     expect(result[1].name).toBe("plugin-c");
   });
+
+  it("unwraps ESM default export interop", () => {
+    const plugin = definePlugin({ name: "esm-plugin" });
+    const resolveModule = vi.fn((name: string) => name);
+    const requireFn = vi.fn(() => ({ default: plugin }));
+    const logger = makeMockLogger();
+
+    const result = loadSubPlugins(
+      { plugins: ["esm-plugin"] },
+      resolveModule,
+      logger,
+      requireFn,
+    );
+
+    expect(result).toHaveLength(1);
+    expect(result[0].name).toBe("esm-plugin");
+  });
 });

@@ -77,6 +77,16 @@ export function loadSubPlugins(
       continue;
     }
 
+    // ESM interop: if the module has a `.default` that is a valid Plugin, use it
+    if (
+      !isValidPlugin(loaded) &&
+      loaded !== null &&
+      typeof loaded === "object" &&
+      isValidPlugin((loaded as Record<string, unknown>)["default"])
+    ) {
+      loaded = (loaded as Record<string, unknown>)["default"];
+    }
+
     if (!isValidPlugin(loaded)) {
       logger.info(
         `fntypescript: Module '${moduleName}' does not export a valid fntypescript plugin. Did you forget to use definePlugin()?`,
