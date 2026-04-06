@@ -38,7 +38,7 @@ Determine the agent from the `agent:` label:
 - **agent:fnlmgtfy** → use the `research` agent
 - **agent:fnyagni** → use the `plan` agent
 
-If no tasks have an `agent:` label, stop — the hosting wrapper will handle retries.
+If no tasks have an `agent:` label, **run the planner** (`plan` agent) to do a big-picture review. The planner will assess whether the project is done, create new tasks, or restructure existing ones. If the planner determines there's genuinely nothing to do, then stop.
 
 ## Claiming a task
 
@@ -127,7 +127,7 @@ If fnyagni isn't sure, move it as-is. fn10x will throw it back if it's too large
 
 ## After routing — check for more work
 
-1. **Proactive planning**: If there are fewer than 2 tasks with `agent:` labels (not `agent:fnrhombus`), check if there are unblocked backlog items. If so, assign `agent:fnyagni` to the next one so the planner can prepare more work. This keeps the pipeline warm — idle workers mean wasted capacity.
+1. **Proactive planning**: If there are fewer than 2 tasks with `agent:` labels (not `agent:fnrhombus`), run the planner (`plan` agent) to do a big-picture review. The planner will assess milestones, create tasks if needed, or confirm the project is on track.
 2. **Do not loop. Do one task, route, then stop.** The hosting wrapper handles retry/sleep logic.
 
 ## Workflow columns
