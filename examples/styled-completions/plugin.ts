@@ -2,15 +2,8 @@ import { definePlugin } from "fntypescript/define-plugin.js";
 import type ts from "typescript/lib/tsserverlibrary";
 
 const CSS_PROPERTIES: string[] = [
-  "align-items", "background", "background-color", "border", "border-radius",
-  "bottom", "box-shadow", "color", "cursor", "display", "flex", "flex-direction",
-  "flex-wrap", "font-family", "font-size", "font-weight", "gap", "grid-template-columns",
-  "height", "justify-content", "left", "letter-spacing", "line-height", "margin",
-  "margin-bottom", "margin-left", "margin-right", "margin-top", "max-height",
-  "max-width", "min-height", "min-width", "opacity", "overflow", "padding",
-  "padding-bottom", "padding-left", "padding-right", "padding-top", "position",
-  "right", "text-align", "text-decoration", "top", "transform", "transition",
-  "width", "z-index",
+  "display", "color", "margin", "padding", "font-size",
+  "background", "border", "width", "height", "position",
 ];
 
 function isCursorInsideCssTemplate(
@@ -59,7 +52,7 @@ export default definePlugin({
 
     const cssEntries: ts.CompletionEntry[] = CSS_PROPERTIES.map((prop) => ({
       name: prop,
-      kind: ctx.typescript.ScriptElementKind.keyword,
+      kind: ctx.typescript.ScriptElementKind.memberVariableElement,
       kindModifiers: "",
       sortText: `0_${prop}`,
     }));

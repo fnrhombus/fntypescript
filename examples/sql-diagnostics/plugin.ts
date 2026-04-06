@@ -34,7 +34,7 @@ export default definePlugin({
         const trimmed = templateText.trimStart().toUpperCase();
         const startsWithKeyword = SQL_KEYWORDS.some((kw) => trimmed.startsWith(kw));
 
-        if (!startsWithKeyword) {
+        if (trimmed && !startsWithKeyword) {
           extra.push({
             file: sourceFile,
             start: node.getStart(sourceFile),

@@ -28,6 +28,9 @@ export default definePlugin({
     const dirName = fileName.replace(/[/\\][^/\\]+$/, "");
     const targetFile = `${dirName}/handlers/${handlerName}.ts`;
 
+    // Only add the definition if the handler file exists in the program
+    if (!program.getSourceFile(targetFile)) return prior;
+
     const customDefinition: ts.DefinitionInfo = {
       fileName: targetFile,
       textSpan: { start: 0, length: 0 },
