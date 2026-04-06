@@ -418,20 +418,27 @@ def main():
     parser = argparse.ArgumentParser(description="fntypescript worker")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Show full claude output (tool calls, results, assistant text)")
+    parser.add_argument("-n", "--iterations", type=int, default=0, metavar="N",
+                        help="Number of iterations to run (0 = infinite, default: 0)")
     args = parser.parse_args()
     VERBOSE = args.verbose
+    max_iters = args.iterations
 
-    print(f"{BOLD}Worker {WORKER_ID} starting{RESET}")
+    print(f"{BOLD}Worker {WORKER_ID} starting{' (' + str(max_iters) + ' iterations)' if max_iters else ''}{RESET}")
     cleanup_worktrees()
 
-    while True:
+    iteration = 0
+    while max_iters == 0 or iteration < max_iters:
+        iteration += 1
         if VERBOSE:
-            print(f"\n{YELLOW}=== Worker cycle ==={RESET}")
+            print(f"\n{YELLOW}=== Worker cycle {iteration}{('/' + str(max_iters)) if max_iters else ''} ==={RESET}")
         work_done = run_worker()
 
         if work_done:
             print(f"{GREEN}[{WORKER_ID}] Work done. Restarting immediately.{RESET}")
         else:
+            if max_iters and iteration >= max_iters:
+                break
             print(f"{YELLOW}[{WORKER_ID}] No work. Sleeping {IDLE_SLEEP}s...{RESET}")
             try:
                 if VERBOSE:
@@ -444,6 +451,8 @@ def main():
             except KeyboardInterrupt:
                 print(f"\n{RED}Stopped.{RESET}")
                 sys.exit(0)
+
+    print(f"{DIM}[{WORKER_ID}] Done ({iteration} iterations).{RESET}")
 
 
 if __name__ == "__main__":
