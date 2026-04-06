@@ -18,6 +18,7 @@ import signal
 import fcntl
 import time
 import random
+import re
 import argparse
 
 # Human-readable worker names
@@ -47,6 +48,12 @@ WORKER_ID = f"{random.choice(WORKER_NAMES)}-{random.randint(10000, 99999)}"
 
 VERBOSE = False
 INTERACTIVE = True
+STOP_REQUESTED = False
+
+
+def ts():
+    """Short timestamp for log lines."""
+    return time.strftime("%H:%M:%S")
 
 
 def gh_comment(issue_num, body):
@@ -65,7 +72,7 @@ def check_claim_won(issue_num):
     result = subprocess.run(
         ["gh", "issue", "view", str(issue_num), "--repo", REPO,
          "--json", "comments", "--jq",
-         '.comments | map(select(.body | startswith("CLAIM "))) | .[-3:] | .[] | .body'],
+         '.comments | map(select(.body | startswith("CLAIM ") or startswith("RELEASE "))) | .[-5:] | .[] | .body'],
         capture_output=True, text=True, timeout=30
     )
 
@@ -74,11 +81,51 @@ def check_claim_won(issue_num):
 
     lines = [l.strip() for l in result.stdout.strip().split("\n") if l.strip()]
 
-    # Simple rule: the LAST claim wins.
     if not lines:
         return False
 
-    return lines[-1] == f"CLAIM {WORKER_ID}"
+    # Our CLAIM must be the first one after the last RELEASE (or the first ever).
+    # If someone else claimed after us, or there's a RELEASE after us, we lost.
+    last_release_idx = -1
+    for i, line in enumerate(lines):
+        if line.startswith("RELEASE "):
+            last_release_idx = i
+
+    # Find the first CLAIM after the last RELEASE
+    for line in lines[last_release_idx + 1:]:
+        if line.startswith("CLAIM "):
+            return line == f"CLAIM {WORKER_ID}"
+
+    return False
+
+
+def is_blocked(issue_num):
+    """Check if an issue references other issues that are still open."""
+    result = subprocess.run(
+        ["gh", "issue", "view", str(issue_num), "--repo", REPO,
+         "--json", "body", "--jq", ".body"],
+        capture_output=True, text=True, timeout=30
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return False
+
+    # Find all issue references (#N) in the body
+    refs = set(int(m) for m in re.findall(r"#(\d+)", result.stdout))
+    if not refs:
+        return False
+
+    # Check which referenced issues are still open
+    for ref in refs:
+        check = subprocess.run(
+            ["gh", "issue", "view", str(ref), "--repo", REPO,
+             "--json", "state", "--jq", ".state"],
+            capture_output=True, text=True, timeout=30
+        )
+        if check.returncode == 0 and check.stdout.strip() == "OPEN":
+            print(f"{YELLOW}{ts()} [{WORKER_ID}] #{issue_num} blocked on #{ref} (still open){RESET}")
+            return True
+
+    return False
 
 
 def claim_task():
@@ -124,6 +171,12 @@ def claim_task():
             agent_label = chosen["agent"]
             issue_num = chosen["number"]
 
+            # Check for blocking dependencies before claiming
+            if is_blocked(issue_num):
+                if VERBOSE:
+                    print(f"{DIM}{ts()} [{WORKER_ID}] #{issue_num} is blocked, skipping...{RESET}")
+                continue
+
             # Post claim comment
             gh_comment(issue_num, f"CLAIM {WORKER_ID}")
 
@@ -132,7 +185,18 @@ def claim_task():
 
             # Verify we won
             if not check_claim_won(issue_num):
-                print(f"{YELLOW}Lost claim on #{issue_num} to another worker, trying next...{RESET}")
+                print(f"{YELLOW}{ts()} [{WORKER_ID}] Lost claim on #{issue_num} to another worker, trying next...{RESET}")
+                continue
+
+            # Verify the label is still present (guards against stale list results)
+            label_check = subprocess.run(
+                ["gh", "issue", "view", str(issue_num), "--repo", REPO,
+                 "--json", "labels", "--jq",
+                 '.labels | map(.name) | any(. == "' + agent_label + '")'],
+                capture_output=True, text=True, timeout=30
+            )
+            if label_check.stdout.strip() != "true":
+                print(f"{YELLOW}{ts()} [{WORKER_ID}] #{issue_num} label already removed, skipping...{RESET}")
                 continue
 
             # We won — remove the label
@@ -142,7 +206,7 @@ def claim_task():
                 capture_output=True, text=True, timeout=30
             )
 
-            print(f"{GREEN}[{WORKER_ID}] Claimed #{issue_num}: {chosen.get('title', '?')} ({agent_label}){RESET}")
+            print(f"{GREEN}{ts()} [{WORKER_ID}] Claimed #{issue_num}: {chosen.get('title', '?')} ({agent_label}){RESET}")
             return issue_num, agent_label
 
         return None, None
@@ -268,10 +332,12 @@ def output_reader(proc, done_event):
                     if VERBOSE:
                         print(f"{BOLD}{block['text']}{RESET}")
                     else:
-                        # In quiet mode, print first line of text as a status update
-                        first_line = block["text"].strip().split("\n")[0]
-                        if first_line:
-                            print(f"{DIM}[{WORKER_ID}] {truncate(first_line, 120)}{RESET}")
+                        # In quiet mode, print first line of each paragraph as a status update
+                        for para in block["text"].strip().split("\n"):
+                            para = para.strip()
+                            if para:
+                                print(f"{DIM}{ts()} [{WORKER_ID}] {para}{RESET}")
+                                break
                 elif block.get("type") == "tool_use" and VERBOSE:
                     name = block.get("name", "?")
                     inp = block.get("input", {})
@@ -301,7 +367,7 @@ def output_reader(proc, done_event):
             cost = msg.get("total_cost_usd", 0)
             dur = msg.get("duration_ms", 0) / 1000
             turns = msg.get("num_turns", 0)
-            print(f"{DIM}── done: {turns} turns, {dur:.1f}s, ${cost:.4f} ──{RESET}")
+            print(f"{DIM}{ts()} ── done: {turns} turns, {dur:.1f}s, ${cost:.4f} ──{RESET}")
             done_event.set()  # Signal that work is complete
 
     sys.stdout.flush()
@@ -339,6 +405,16 @@ def input_sender(proc, done_event):
                 break
     except KeyboardInterrupt:
         pass
+
+
+def handle_sigint(signum, frame):
+    """First ctrl+c: request graceful stop. Second: hard exit."""
+    global STOP_REQUESTED
+    if STOP_REQUESTED:
+        print(f"\n{RED}[{WORKER_ID}] Force killed.{RESET}")
+        sys.exit(1)
+    STOP_REQUESTED = True
+    print(f"\n{YELLOW}{ts()} [{WORKER_ID}] Graceful stop requested — finishing current task, then exiting. (ctrl+c again to force kill){RESET}")
 
 
 def run_worker():
@@ -413,7 +489,17 @@ def run_worker():
     out_thread.join(timeout=5)
 
     # Release the task
-    release_task(issue_num, "worker session ended")
+    if STOP_REQUESTED:
+        # Re-add the agent label so another worker can pick it up
+        subprocess.run(
+            ["gh", "issue", "edit", str(issue_num), "--add-label", agent_label,
+             "--repo", REPO],
+            capture_output=True, text=True, timeout=30
+        )
+        release_task(issue_num, f"graceful stop requested — re-added {agent_label}")
+        print(f"{YELLOW}{ts()} [{WORKER_ID}] #{issue_num} released back to the pool ({agent_label}){RESET}")
+    else:
+        release_task(issue_num, "worker session ended")
 
     return True  # Work was done
 
@@ -432,40 +518,42 @@ def main():
     INTERACTIVE = not args.no_interactive
     max_iters = args.iterations
 
-    print(f"{BOLD}Worker {WORKER_ID} starting{' (' + str(max_iters) + ' iterations)' if max_iters else ''}{RESET}")
+    signal.signal(signal.SIGINT, handle_sigint)
+
+    print(f"{BOLD}{ts()} Worker {WORKER_ID} starting{' (' + str(max_iters) + ' iterations)' if max_iters else ''}{RESET}")
     cleanup_worktrees()
 
     iteration = 0
     while max_iters == 0 or iteration < max_iters:
+        if STOP_REQUESTED:
+            print(f"{YELLOW}{ts()} [{WORKER_ID}] Stop requested, not picking up new work.{RESET}")
+            break
+
         iteration += 1
         if VERBOSE:
             print(f"\n{YELLOW}=== Worker cycle {iteration}{('/' + str(max_iters)) if max_iters else ''} ==={RESET}")
         work_done = run_worker()
 
+        if STOP_REQUESTED:
+            break
+
         if work_done:
-            print(f"{GREEN}[{WORKER_ID}] Work done. Restarting immediately.{RESET}")
+            print(f"{GREEN}{ts()} [{WORKER_ID}] Work done. Restarting immediately.{RESET}")
         else:
             if max_iters and iteration >= max_iters:
                 break
-            print(f"{YELLOW}[{WORKER_ID}] No work. Sleeping {IDLE_SLEEP}s...{RESET}")
-            try:
+            print(f"{YELLOW}{ts()} [{WORKER_ID}] No work. Sleeping {IDLE_SLEEP}s...{RESET}")
+            for i in range(IDLE_SLEEP):
+                if STOP_REQUESTED:
+                    break
                 if VERBOSE:
-                    for i in range(IDLE_SLEEP, 0, -1):
-                        print(f"\r{DIM}Resuming in {i}s (ctrl+c to quit){RESET}", end="")
-                        time.sleep(1)
-                    print()
-                else:
-                    time.sleep(IDLE_SLEEP)
-            except KeyboardInterrupt:
-                print(f"\n{RED}Stopped.{RESET}")
-                sys.exit(0)
+                    print(f"\r{DIM}Resuming in {IDLE_SLEEP - i}s (ctrl+c to quit){RESET}", end="")
+                time.sleep(1)
+            if VERBOSE:
+                print()
 
-    print(f"{DIM}[{WORKER_ID}] Done ({iteration} iterations).{RESET}")
+    print(f"{DIM}{ts()} [{WORKER_ID}] Done ({iteration} iterations).{RESET}")
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        print(f"\n{RED}Stopped.{RESET}")
-        sys.exit(0)
+    main()

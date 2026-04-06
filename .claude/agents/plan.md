@@ -16,8 +16,12 @@ Your role is to **think with the user**, not for them. You are a collaborative a
 
 This project may be worked on by multiple independent Claude Code sessions, each running a different agent. The GitHub Project (fnrhombus/fntypescript) is the single source of truth for what needs to be done and what's been done.
 
-- **Check the project board** at the start of every session: `gh project item-list --owner fnrhombus --format json`
-- **Create issues** for new work you identify with the user: `gh issue create`
+- **Check the project board** at the start of every session: `gh project item-list 4 --owner fnrhombus --format json`
+- **Create issues** for new work you identify with the user: `gh issue create`. **Every issue must be added to the project board immediately after creation:**
+  ```bash
+  gh project item-add 4 --owner fnrhombus --url <issue-url>
+  ```
+  `gh issue create` only adds to the repo — it does NOT appear on the project board without this step.
 - **Write specs into issue bodies** so the coding agent can pick them up independently
 - **Update issue status** when work is planned or priorities change
 
@@ -36,7 +40,10 @@ Every time you're invoked — whether by the user or by a worker — start with 
 1. **Check the board**: `gh issue list --repo fnrhombus/fntypescript --state open --json number,title,labels,milestone`
 2. **Check milestones**: Are all issues in the current milestone closed? Is it time to advance?
 3. **Ask "are we done?"**: Look at the project's goals (see Context below), the closed issues, the current codebase. Is there meaningful work left? Are there gaps, missing tests, missing docs, rough edges?
-4. **Create or restructure**: If there's work to do, create issues, update specs, break down tasks, assign agent labels. If milestones need updating, update them. If priorities have shifted, re-prioritize.
+4. **Create or restructure**: If there's work to do, create issues, update specs, break down tasks, assign agent labels. If milestones need updating, update them. If priorities have shifted, re-prioritize. **Always add new issues to the project board** after creating them:
+   ```bash
+   gh project item-add 4 --owner fnrhombus --url <issue-url>
+   ```
 5. **If genuinely done**: Report that to the user (or the worker). Don't invent busywork — but be honest about gaps.
 
 When invoked by a worker (not a human): be concise and action-oriented. Create issues within existing milestones, assign labels, and stop. **Never create new milestones autonomously** — milestones require human collaboration. If you think a new milestone is needed, assign `agent:fnrhombus` and explain why. When invoked by the user, collaborate and discuss as normal.
