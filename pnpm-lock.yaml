@@ -18,9 +18,34 @@ importers:
         specifier: workspace:*
         version: link:../../packages/fntypescript
     devDependencies:
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.17
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  examples/demo:
+    dependencies:
+      '@fntypescript/plugin-custom-definitions':
+        specifier: workspace:*
+        version: link:../custom-definitions
+      '@fntypescript/plugin-enhanced-hover':
+        specifier: workspace:*
+        version: link:../enhanced-hover
+      '@fntypescript/plugin-function-decorators':
+        specifier: workspace:*
+        version: link:../function-decorators
+      '@fntypescript/plugin-graphql-diagnostics':
+        specifier: workspace:*
+        version: link:../graphql-diagnostics
+      '@fntypescript/plugin-sql-diagnostics':
+        specifier: workspace:*
+        version: link:../sql-diagnostics
+      '@fntypescript/plugin-styled-completions':
+        specifier: workspace:*
+        version: link:../styled-completions
+      fntypescript:
+        specifier: workspace:*
+        version: link:../../packages/fntypescript
+    devDependencies:
       typescript:
         specifier: ^5.7.0
         version: 5.9.3

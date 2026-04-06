@@ -14,14 +14,4 @@ Catches copy-paste errors and misplaced strings before they hit the database.
 
 ## Setup
 
-Add to your `tsconfig.json`:
-
-```json
-{
-  "compilerOptions": {
-    "plugins": [{ "name": "fntypescript" }]
-  }
-}
-```
-
-Then register this plugin via fntypescript's plugin registry (see the main docs).
+Register this plugin in your fntypescript configuration. See the [demo project](../demo/) for a complete multi-plugin example.

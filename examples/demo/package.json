@@ -1,0 +1,20 @@
+{
+  "name": "@fntypescript/demo",
+  "private": true,
+  "description": "Multi-plugin demo: all fntypescript example plugins working together",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "fntypescript": "workspace:*",
+    "@fntypescript/plugin-function-decorators": "workspace:*",
+    "@fntypescript/plugin-sql-diagnostics": "workspace:*",
+    "@fntypescript/plugin-styled-completions": "workspace:*",
+    "@fntypescript/plugin-enhanced-hover": "workspace:*",
+    "@fntypescript/plugin-custom-definitions": "workspace:*",
+    "@fntypescript/plugin-graphql-diagnostics": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}

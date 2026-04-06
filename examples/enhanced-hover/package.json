@@ -1,7 +1,7 @@
 {
-  "name": "@fntypescript/example-enhanced-hover",
+  "name": "@fntypescript/plugin-enhanced-hover",
   "private": true,
-  "description": "Example: augment hover documentation for symbols whose display text contains 'Model'",
+  "description": "Augment hover documentation for symbols whose display text contains 'Model'",
   "scripts": {
     "build": "tsc"
   },
