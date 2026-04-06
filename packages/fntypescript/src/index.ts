@@ -1,10 +1,10 @@
 import type ts from "typescript/lib/tsserverlibrary";
 import { createLanguageServiceProxy } from "./proxy.js";
 import { definePlugin } from "./define-plugin.js";
-import type { HookContext, Plugin, PluginDefinition } from "./types.js";
+import type { HookableService, HookArgs, HookContext, HookName, HookResult, Plugin, PluginDefinition } from "./types.js";
 
 /** All LanguageService method names that fntypescript hooks into */
-const HOOKABLE_METHODS: ReadonlyArray<keyof PluginDefinition> = [
+const HOOKABLE_METHODS: readonly HookName[] = [
   "getSemanticDiagnostics",
   "getSyntacticDiagnostics",
   "getSuggestionDiagnostics",
@@ -46,12 +46,12 @@ function createPluginLogger(
  *
  * Plugins are applied in order; errors are isolated (prior value is kept on throw).
  */
-function composeHook<TArgs extends unknown[], TResult>(
-  baseMethod: (...args: TArgs) => TResult,
+function composeHook<K extends HookName>(
+  baseMethod: (...args: HookArgs<K>) => HookResult<K>,
   plugins: Plugin[],
-  hookName: keyof PluginDefinition,
+  hookName: K,
   makeContext: (pluginName: string, fileName: string) => HookContext,
-): (...args: TArgs) => TResult {
+): (...args: HookArgs<K>) => HookResult<K> {
   const active = plugins.filter(
     (p) => typeof p.definition[hookName] === "function",
   );
@@ -60,26 +60,20 @@ function composeHook<TArgs extends unknown[], TResult>(
     return baseMethod;
   }
 
-  return (...args: TArgs): TResult => {
+  return (...args: HookArgs<K>): HookResult<K> => {
     const fileName = typeof args[0] === "string" ? args[0] : "";
-    let result = baseMethod(...args);
 
-    for (const plugin of active) {
+    return active.reduce((prior, plugin) => {
       const ctx = makeContext(plugin.name, fileName);
-      const hook = plugin.definition[hookName] as unknown as (
-        ctx: HookContext,
-        prior: TResult,
-        ...rest: TArgs
-      ) => TResult;
+      const hook = plugin.definition[hookName] as PluginDefinition[K];
       try {
-        result = hook(ctx, result, ...args);
+        return (hook as Function)(ctx, prior, ...args) as HookResult<K>;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         ctx.logger.error(`${hookName} threw: ${message}`);
+        return prior;
       }
-    }
-
-    return result;
+    }, baseMethod(...args));
   };
 }
 
@@ -115,34 +109,32 @@ function init(modules: {
       return (entry as Record<string, unknown> | undefined) ?? {};
     }
 
-    for (const hookName of HOOKABLE_METHODS) {
-      const lsKey = hookName as string;
-      const baseMethod = (proxy as unknown as Record<string, (...args: unknown[]) => unknown>)[lsKey];
+    const hookable = proxy as HookableService;
 
-      if (typeof baseMethod !== "function") {
-        continue;
-      }
+    HOOKABLE_METHODS
+      .filter((hookName) => typeof hookable[hookName] === "function")
+      .forEach((hookName) => {
+        const baseMethod = hookable[hookName];
+        const makeContext = (pluginName: string, fileName: string): HookContext => ({
+          fileName,
+          languageService: proxy,
+          typescript: _typescript,
+          project: info.project,
+          config: getPluginConfig(pluginName),
+          logger: createPluginLogger(pluginName, serverLogger),
+        });
 
-      const makeContext = (pluginName: string, fileName: string): HookContext => ({
-        fileName,
-        languageService: proxy,
-        typescript: _typescript,
-        project: info.project,
-        config: getPluginConfig(pluginName),
-        logger: createPluginLogger(pluginName, serverLogger),
+        const composed = composeHook(
+          baseMethod.bind(proxy),
+          plugins,
+          hookName,
+          makeContext,
+        );
+
+        if (composed !== baseMethod) {
+          hookable[hookName] = composed as any;
+        }
       });
-
-      const composed = composeHook(
-        baseMethod.bind(proxy) as (...args: unknown[]) => unknown,
-        plugins,
-        hookName,
-        makeContext,
-      );
-
-      if (composed !== baseMethod) {
-        (proxy as unknown as Record<string, unknown>)[lsKey] = composed;
-      }
-    }
 
     return proxy;
   }

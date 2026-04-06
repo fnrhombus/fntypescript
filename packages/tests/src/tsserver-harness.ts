@@ -68,9 +68,9 @@ export class TsServerHarness {
     });
 
     this.proc.on("error", (err) => {
-      for (const pending of this.pending.values()) {
-        pending.reject(new Error(`tsserver process error: ${err.message}`));
-      }
+      this.pending.forEach((pending) =>
+        pending.reject(new Error(`tsserver process error: ${err.message}`)),
+      );
       this.pending.clear();
     });
 

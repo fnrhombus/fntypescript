@@ -7,10 +7,12 @@ import { TsServerHarness } from "./tsserver-harness.js";
 
 const execFileAsync = promisify(execFile);
 
-const ROOT = path.resolve(__dirname, "..");
-const FIXTURE_DIR = path.join(ROOT, "test-fixtures", "basic-project");
-const TSC_BIN = path.join(ROOT, "node_modules", ".bin", "tsc");
-const TSSERVER_BIN = path.join(ROOT, "node_modules", "typescript", "bin", "tsserver");
+const TESTS_ROOT = path.resolve(__dirname, "..");
+const FIXTURE_DIR = path.join(TESTS_ROOT, "fixtures", "basic-project");
+const CORE_ROOT = path.resolve(TESTS_ROOT, "..", "fntypescript");
+const TS_DIR = path.dirname(require.resolve("typescript"));
+const TSC_BIN = path.join(TS_DIR, "tsc.js");
+const TSSERVER_BIN = path.join(TS_DIR, "tsserver.js");
 const NODE_BIN = process.execPath;
 
 const FIXTURE_TSCONFIG = path.join(FIXTURE_DIR, "tsconfig.json");
@@ -21,15 +23,15 @@ const FIXTURE_FUNCTIONS = path.join(FIXTURE_DIR, "src", "functions.ts");
 let harness: TsServerHarness | undefined;
 
 beforeAll(async () => {
-  // Build the plugin so tsserver can load it
-  await execFileAsync(NODE_BIN, [TSC_BIN], { cwd: ROOT });
+  // Build the core plugin so tsserver can load it
+  await execFileAsync(NODE_BIN, [TSC_BIN], { cwd: CORE_ROOT });
 
   // Create symlink so tsserver can resolve "fntypescript" from fixture project
   const nodeModulesDir = path.join(FIXTURE_DIR, "node_modules");
   const symlinkTarget = path.join(nodeModulesDir, "fntypescript");
   if (!fs.existsSync(symlinkTarget)) {
     fs.mkdirSync(nodeModulesDir, { recursive: true });
-    fs.symlinkSync(ROOT, symlinkTarget);
+    fs.symlinkSync(CORE_ROOT, symlinkTarget);
   }
 
   harness = new TsServerHarness(TSSERVER_BIN, NODE_BIN, FIXTURE_DIR);
@@ -50,7 +52,7 @@ afterAll(async () => {
 describe("tsc baseline (no plugin)", () => {
   it("reports zero type errors", async () => {
     const result = await execFileAsync(NODE_BIN, [TSC_BIN, "--project", FIXTURE_TSCONFIG_NOPLUGIN, "--noEmit"], {
-      cwd: ROOT,
+      cwd: CORE_ROOT,
     }).then(() => ({ exitCode: 0, stderr: "" })).catch((err) => ({
       exitCode: err.code as number,
       stderr: (err.stderr ?? err.stdout ?? "") as string,
@@ -64,7 +66,7 @@ describe("tsc baseline (no plugin)", () => {
 describe("tsc with plugin in tsconfig", () => {
   it("reports zero type errors", async () => {
     const result = await execFileAsync(NODE_BIN, [TSC_BIN, "--project", FIXTURE_TSCONFIG, "--noEmit"], {
-      cwd: ROOT,
+      cwd: CORE_ROOT,
     }).then(() => ({ exitCode: 0 })).catch((err) => ({
       exitCode: err.code as number,
     }));

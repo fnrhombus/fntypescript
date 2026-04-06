@@ -6,10 +6,10 @@ type PluginModule = {
   getExternalFiles: (project: ts.server.Project) => string[];
 };
 
-function makeInit(): typeof import("./index.js") {
+function makeInit(): typeof import("fntypescript") {
   // Re-import fresh each time via dynamic require workaround
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  return require("./index.js") as typeof import("./index.js");
+  return require("fntypescript") as typeof import("fntypescript");
 }
 
 function makeMockLanguageService(
@@ -40,7 +40,7 @@ function makeMockInfo(
 
 describe("init", () => {
   it("returns an object with create and getExternalFiles functions", async () => {
-    const { default: init } = await import("./index.js");
+    const { default: init } = await import("fntypescript");
     const plugin = init({ typescript: {} as typeof ts }) as unknown as PluginModule;
 
     expect(typeof plugin.create).toBe("function");
@@ -48,7 +48,7 @@ describe("init", () => {
   });
 
   it("create returns a LanguageService proxy with callable methods", async () => {
-    const { default: init } = await import("./index.js");
+    const { default: init } = await import("fntypescript");
     const plugin = init({ typescript: {} as typeof ts }) as unknown as PluginModule;
     const mockService = makeMockLanguageService();
     const info = makeMockInfo({ languageService: mockService });
@@ -63,7 +63,7 @@ describe("init", () => {
   });
 
   it("create proxy passes return values from the base service through", async () => {
-    const { default: init } = await import("./index.js");
+    const { default: init } = await import("fntypescript");
     const plugin = init({ typescript: {} as typeof ts }) as unknown as PluginModule;
     const returnValue = { entries: [{ name: "bar" }] };
     const mockService = makeMockLanguageService({
@@ -80,7 +80,7 @@ describe("init", () => {
   });
 
   it("getExternalFiles returns an empty array", async () => {
-    const { default: init } = await import("./index.js");
+    const { default: init } = await import("fntypescript");
     const plugin = init({ typescript: {} as typeof ts }) as unknown as PluginModule;
 
     const result = plugin.getExternalFiles({} as ts.server.Project);
@@ -89,7 +89,7 @@ describe("init", () => {
   });
 
   it("info.config is stored and retrievable via getStoredConfig", async () => {
-    const { default: init } = await import("./index.js");
+    const { default: init } = await import("fntypescript");
     const plugin = init({ typescript: {} as typeof ts }) as PluginModule & {
       getStoredConfig: (proxy: ts.LanguageService) => unknown;
     };
@@ -102,7 +102,7 @@ describe("init", () => {
   });
 
   it("info.config is stored per proxy without cross-contamination between create calls", async () => {
-    const { default: init } = await import("./index.js");
+    const { default: init } = await import("fntypescript");
     const plugin = init({ typescript: {} as typeof ts }) as PluginModule & {
       getStoredConfig: (proxy: ts.LanguageService) => unknown;
     };

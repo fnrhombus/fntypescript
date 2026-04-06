@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { createLanguageServiceProxy } from "./proxy.js";
+import { createLanguageServiceProxy } from "fntypescript/proxy.js";
 
 function makeBaseService(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {

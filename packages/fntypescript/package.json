@@ -1,0 +1,40 @@
+{
+  "name": "fntypescript",
+  "version": "0.1.0",
+  "description": "TypeScript Language Service plugin framework",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
+    },
+    "./define-plugin.js": {
+      "types": "./dist/define-plugin.d.ts",
+      "import": "./dist/define-plugin.js",
+      "require": "./dist/define-plugin.js"
+    },
+    "./proxy.js": {
+      "types": "./dist/proxy.d.ts",
+      "import": "./dist/proxy.js",
+      "require": "./dist/proxy.js"
+    },
+    "./types.js": {
+      "types": "./dist/types.d.ts"
+    }
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "typescript": ">=5.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}

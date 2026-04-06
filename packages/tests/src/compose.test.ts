@@ -4,8 +4,8 @@
  */
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import type ts from "typescript/lib/tsserverlibrary";
-import { definePlugin } from "./define-plugin.js";
-import type { HookContext, Plugin } from "./types.js";
+import { definePlugin } from "fntypescript/define-plugin.js";
+import type { HookContext, Plugin } from "fntypescript/types.js";
 
 type InitModule = {
   create: (info: ts.server.PluginCreateInfo, plugins: Plugin[]) => ts.LanguageService;
@@ -14,7 +14,7 @@ type InitModule = {
 let _init: InitModule;
 
 beforeAll(async () => {
-  const mod = await import("./index.js");
+  const mod = await import("fntypescript");
   const init = (mod as unknown as { default: (m: { typescript: typeof ts }) => InitModule }).default;
   _init = init({ typescript: {} as typeof ts });
 });

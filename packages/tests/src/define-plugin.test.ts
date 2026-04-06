@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { definePlugin } from "./define-plugin.js";
+import { definePlugin } from "fntypescript/define-plugin.js";
 
 describe("definePlugin", () => {
   it("returns an object with the given name", () => {

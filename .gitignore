@@ -4,5 +4,5 @@ dist/
 .env
 .env.*
 coverage/
-.tsbuildinfo
+.turbo/
 .claude/worktrees/
