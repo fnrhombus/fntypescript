@@ -1,0 +1,50 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Worker 1",
+      "type": "shell",
+      "command": ".claude/run-worker.sh",
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": {
+        "group": "workers",
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Worker 2",
+      "type": "shell",
+      "command": ".claude/run-worker.sh",
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": {
+        "group": "workers",
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Worker 3",
+      "type": "shell",
+      "command": ".claude/run-worker.sh",
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": {
+        "group": "workers",
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Launch Workers",
+      "dependsOn": ["Worker 1", "Worker 2", "Worker 3"],
+      "dependsOrder": "parallel",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always"
+      }
+    }
+  ]
+}
