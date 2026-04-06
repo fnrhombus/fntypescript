@@ -7,7 +7,6 @@
     "outDir": "dist",
     "rootDir": "src",
     "skipLibCheck": true,
-    "experimentalDecorators": true,
     "plugins": [
       { "name": "fntypescript" },
       { "transform": "./src/plugin.ts", "import": "transformer" }

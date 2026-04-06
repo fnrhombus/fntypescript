@@ -43,7 +43,6 @@ See [`src/plugin.ts`](src/plugin.ts) for the full implementation. The key parts:
 ```json
 {
   "compilerOptions": {
-    "experimentalDecorators": true,
     "plugins": [
       { "name": "fntypescript" },
       { "transform": "./src/plugin.ts", "import": "transformer" }
@@ -51,6 +50,8 @@ See [`src/plugin.ts`](src/plugin.ts) for the full implementation. The key parts:
   }
 }
 ```
+
+> **Note:** Do NOT use `"experimentalDecorators": true` — that enables the legacy Angular-era decorator proposal with different semantics. This example works with the standard TC39 decorator syntax.
 
 The `plugins` array has two entries:
 - **`"name": "fntypescript"`** — tells tsserver to load the Language Service plugin (editor-time)
