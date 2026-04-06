@@ -1,7 +1,3 @@
 {
-  "python.defaultInterpreterPath": "${workspaceFolder}/.mise/shims/python3",
-  "typescript.tsdk": "node_modules/typescript/lib",
-  "debug.javascript.defaultRuntimeExecutable": {
-    "pwa-node": "/home/tom/.local/share/mise/shims/node"
-  }
+  "typescript.tsdk": "node_modules/typescript/lib"
 }
