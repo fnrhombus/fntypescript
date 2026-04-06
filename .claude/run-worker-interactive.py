@@ -46,6 +46,7 @@ IDLE_SLEEP = 180  # seconds to sleep when no work available
 WORKER_ID = f"{random.choice(WORKER_NAMES)}-{random.randint(10000, 99999)}"
 
 VERBOSE = False
+INTERACTIVE = True
 
 
 def gh_comment(issue_num, body):
@@ -391,8 +392,12 @@ def run_worker():
     out_thread = threading.Thread(target=output_reader, args=(proc, done_event), daemon=True)
     out_thread.start()
 
-    # Run input sender on main thread (handles ctrl+c, exits when done)
-    input_sender(proc, done_event)
+    if INTERACTIVE:
+        # Run input sender on main thread (handles ctrl+c, exits when done)
+        input_sender(proc, done_event)
+    else:
+        # Non-interactive: close stdin and just wait
+        proc.stdin.close()
 
     # Wait for the result message (up to 10 minutes beyond stdin EOF)
     done_event.wait(timeout=600)
@@ -414,14 +419,17 @@ def run_worker():
 
 
 def main():
-    global VERBOSE
+    global VERBOSE, INTERACTIVE
     parser = argparse.ArgumentParser(description="fntypescript worker")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Show full claude output (tool calls, results, assistant text)")
     parser.add_argument("-n", "--iterations", type=int, default=0, metavar="N",
                         help="Number of iterations to run (0 = infinite, default: 0)")
+    parser.add_argument("--no-interactive", action="store_true",
+                        help="Non-interactive mode: no stdin forwarding, just run and exit")
     args = parser.parse_args()
     VERBOSE = args.verbose
+    INTERACTIVE = not args.no_interactive
     max_iters = args.iterations
 
     print(f"{BOLD}Worker {WORKER_ID} starting{' (' + str(max_iters) + ' iterations)' if max_iters else ''}{RESET}")
