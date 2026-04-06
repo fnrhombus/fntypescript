@@ -18,6 +18,7 @@ import signal
 import fcntl
 import time
 import random
+import argparse
 
 # Human-readable worker names
 WORKER_NAMES = [
@@ -43,6 +44,8 @@ IDLE_SLEEP = 180  # seconds to sleep when no work available
 
 # Generate a persistent worker ID for this process lifetime
 WORKER_ID = f"{random.choice(WORKER_NAMES)}-{random.randint(10000, 99999)}"
+
+VERBOSE = False
 
 
 def gh_comment(issue_num, body):
@@ -184,7 +187,8 @@ def cleanup_worktrees():
     for wt in stale:
         path = wt["path"]
         branch = wt.get("branch", "")
-        print(f"{DIM}Cleaning worktree: {path} ({branch}){RESET}")
+        if VERBOSE:
+            print(f"{DIM}Cleaning worktree: {path} ({branch}){RESET}")
         subprocess.run(["git", "worktree", "remove", "--force", path],
                        capture_output=True, text=True, timeout=30)
         if branch and branch != "main":
@@ -204,7 +208,8 @@ def cleanup_worktrees():
             if branch.startswith(("worktree-agent-", "feat/")):
                 subprocess.run(["git", "branch", "-D", branch],
                                capture_output=True, text=True, timeout=30)
-                print(f"{DIM}Deleted branch: {branch}{RESET}")
+                if VERBOSE:
+                    print(f"{DIM}Deleted branch: {branch}{RESET}")
 
     # Prune remote tracking branches
     subprocess.run(["git", "remote", "prune", "origin"],
@@ -244,43 +249,47 @@ def output_reader(proc, done_event):
         try:
             msg = json.loads(line)
         except json.JSONDecodeError:
-            print(line)
+            if VERBOSE:
+                print(line)
             continue
 
         t = msg.get("type", "")
 
         if t == "system" and msg.get("subtype") == "init":
-            model = msg.get("model", "?")
-            print(f"{DIM}── session: {msg.get('session_id', '?')[:8]}… model: {model} ──{RESET}")
+            if VERBOSE:
+                model = msg.get("model", "?")
+                print(f"{DIM}── session: {msg.get('session_id', '?')[:8]}… model: {model} ──{RESET}")
 
         elif t == "assistant":
-            content = msg.get("message", {}).get("content", [])
-            for block in content:
-                if block.get("type") == "text":
-                    print(f"{BOLD}{block['text']}{RESET}")
-                elif block.get("type") == "tool_use":
-                    name = block.get("name", "?")
-                    inp = block.get("input", {})
-                    desc = format_tool_input(name, inp)
-                    print(f"  {CYAN}▶ {name}{RESET} {DIM}{truncate(desc)}{RESET}")
+            if VERBOSE:
+                content = msg.get("message", {}).get("content", [])
+                for block in content:
+                    if block.get("type") == "text":
+                        print(f"{BOLD}{block['text']}{RESET}")
+                    elif block.get("type") == "tool_use":
+                        name = block.get("name", "?")
+                        inp = block.get("input", {})
+                        desc = format_tool_input(name, inp)
+                        print(f"  {CYAN}▶ {name}{RESET} {DIM}{truncate(desc)}{RESET}")
 
         elif t == "user":
-            result = msg.get("tool_use_result", {})
-            if isinstance(result, str):
-                result = {"stdout": result}
-            stdout = result.get("stdout", "")
-            stderr = result.get("stderr", "")
-            is_error = result.get("is_error", False)
-            content = msg.get("message", {}).get("content", [])
-            if content and isinstance(content[0], dict):
-                is_error = is_error or content[0].get("is_error", False)
+            if VERBOSE:
+                result = msg.get("tool_use_result", {})
+                if isinstance(result, str):
+                    result = {"stdout": result}
+                stdout = result.get("stdout", "")
+                stderr = result.get("stderr", "")
+                is_error = result.get("is_error", False)
+                content = msg.get("message", {}).get("content", [])
+                if content and isinstance(content[0], dict):
+                    is_error = is_error or content[0].get("is_error", False)
 
-            if stderr and not stdout:
-                print(f"  {RED}✗ {truncate(stderr)}{RESET}")
-            elif is_error:
-                print(f"  {RED}✗ {truncate(stdout or stderr)}{RESET}")
-            elif stdout:
-                print(f"  {GREEN}✓ {truncate(stdout)}{RESET}")
+                if stderr and not stdout:
+                    print(f"  {RED}✗ {truncate(stderr)}{RESET}")
+                elif is_error:
+                    print(f"  {RED}✗ {truncate(stdout or stderr)}{RESET}")
+                elif stdout:
+                    print(f"  {GREEN}✓ {truncate(stdout)}{RESET}")
 
         elif t == "result":
             cost = msg.get("total_cost_usd", 0)
@@ -332,7 +341,8 @@ def run_worker():
     # Claim a task atomically before launching claude
     issue_num, agent_label = claim_task()
     if issue_num is None:
-        print(f"{DIM}No tasks available.{RESET}")
+        if VERBOSE:
+            print(f"{DIM}No tasks available.{RESET}")
         return False
 
     cmd = [
@@ -399,22 +409,33 @@ def run_worker():
 
 
 def main():
+    global VERBOSE
+    parser = argparse.ArgumentParser(description="fntypescript worker")
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="Show full claude output (tool calls, results, assistant text)")
+    args = parser.parse_args()
+    VERBOSE = args.verbose
+
     print(f"{BOLD}Worker {WORKER_ID} starting{RESET}")
     cleanup_worktrees()
 
     while True:
-        print(f"\n{YELLOW}=== Worker cycle ==={RESET}")
+        if VERBOSE:
+            print(f"\n{YELLOW}=== Worker cycle ==={RESET}")
         work_done = run_worker()
 
         if work_done:
-            print(f"{GREEN}Work done. Restarting immediately.{RESET}")
+            print(f"{GREEN}[{WORKER_ID}] Work done. Restarting immediately.{RESET}")
         else:
-            print(f"{YELLOW}No work. Sleeping {IDLE_SLEEP}s...{RESET}")
+            print(f"{YELLOW}[{WORKER_ID}] No work. Sleeping {IDLE_SLEEP}s...{RESET}")
             try:
-                for i in range(IDLE_SLEEP, 0, -1):
-                    print(f"\r{DIM}Resuming in {i}s (ctrl+c to quit){RESET}", end="")
-                    time.sleep(1)
-                print()
+                if VERBOSE:
+                    for i in range(IDLE_SLEEP, 0, -1):
+                        print(f"\r{DIM}Resuming in {i}s (ctrl+c to quit){RESET}", end="")
+                        time.sleep(1)
+                    print()
+                else:
+                    time.sleep(IDLE_SLEEP)
             except KeyboardInterrupt:
                 print(f"\n{RED}Stopped.{RESET}")
                 sys.exit(0)
