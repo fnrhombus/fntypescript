@@ -87,7 +87,7 @@ When to update:
 
 1. Read the full issue spec: `gh issue view <N> --repo fnrhombus/fntypescript`
 2. **Update the project board**: set the issue to "In Progress".
-3. Spawn the appropriate agent using the Agent tool with `subagent_type` matching the agent name. Pass the full issue spec in the prompt. For the code agent, use `isolation: "worktree"` so it works on an isolated branch.
+3. Spawn the appropriate agent using the Agent tool with `subagent_type` matching the agent name. Pass the full issue spec in the prompt. If a worktree path was provided in the init message, tell the agent to work in that directory — do NOT use `isolation: "worktree"` (the worktree is already created by the hosting script). If no worktree was provided, the agent works in the main repo.
 4. Wait for the agent to complete.
 5. If the agent reports success, comment on the issue as the appropriate bot:
    ```bash

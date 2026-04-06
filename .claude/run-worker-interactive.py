@@ -40,6 +40,7 @@ BLUE = "\033[34m"
 WHITE_ON_BLUE = "\033[97;44m"
 
 LOCK_FILE = "/tmp/fntypescript-worker.lock"
+WORKTREE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "worktrees")
 PLANNER_LOCK_FILE = "/tmp/fntypescript-planner.lock"
 PLANNER_COOLDOWN_FILE = "/tmp/fntypescript-planner-cooldown"
 PLANNER_COOLDOWN = 900  # 15 minutes between planner runs that find no work
@@ -273,7 +274,7 @@ def cleanup_worktrees():
             branch = branch.strip()
             if not branch or branch == "main":
                 continue
-            if branch.startswith(("worktree-agent-", "feat/")):
+            if branch.startswith(("worktree-agent-", "feat/")) or "/issue-" in branch:
                 subprocess.run(["git", "branch", "-D", branch],
                                capture_output=True, text=True, timeout=30)
                 if VERBOSE:
@@ -523,6 +524,24 @@ def run_worker():
     if issue_num is None:
         return run_planner()
 
+    # Create a named worktree for code agents to work in
+    worktree_branch = f"{WORKER_ID}/issue-{issue_num}"
+    worktree_path = os.path.join(WORKTREE_DIR, f"{WORKER_ID}-issue-{issue_num}")
+    worktree_created = False
+
+    if agent_label in ("agent:fn10x", "agent:fnnitpick"):
+        os.makedirs(WORKTREE_DIR, exist_ok=True)
+        wt_result = subprocess.run(
+            ["git", "worktree", "add", worktree_path, "-b", worktree_branch],
+            capture_output=True, text=True, timeout=30
+        )
+        if wt_result.returncode == 0:
+            worktree_created = True
+            if VERBOSE:
+                print(f"{DIM}{ts()} [{WORKER_ID}] Created worktree: {worktree_path} ({worktree_branch}){RESET}")
+        else:
+            print(f"{YELLOW}{ts()} [{WORKER_ID}] Worktree creation failed, agent will work in main: {wt_result.stderr.strip()}{RESET}")
+
     cmd = [
         "claude", "--agent", "worker",
         "--print", "--verbose",
@@ -541,6 +560,15 @@ def run_worker():
     )
 
     # Tell the worker which task was already claimed
+    worktree_info = ""
+    if worktree_created:
+        worktree_info = (
+            f"A git worktree has been created for this task at: {worktree_path} "
+            f"(branch: {worktree_branch}). "
+            f"Tell the code/QA agent to work in this directory. "
+            f"Do NOT use isolation: \"worktree\" — the worktree is already set up. "
+        )
+
     init_msg = json.dumps({
         "type": "user",
         "message": {
@@ -549,6 +577,7 @@ def run_worker():
                 f"Task already claimed for you: issue #{issue_num} (was {agent_label}). "
                 f"The {agent_label} label has already been removed. "
                 f"Worker ID: {WORKER_ID}. "
+                f"{worktree_info}"
                 f"Skip the startup scan and claiming steps — go straight to execution. "
                 f"Read the issue spec and begin work."
             )
