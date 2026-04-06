@@ -12,6 +12,16 @@ importers:
         specifier: ^2
         version: 2.9.4
 
+  examples/function-decorators:
+    dependencies:
+      fntypescript:
+        specifier: workspace:*
+        version: link:../../packages/fntypescript
+    devDependencies:
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/fntypescript:
     devDependencies:
       typescript:

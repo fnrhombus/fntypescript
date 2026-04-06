@@ -1,0 +1,13 @@
+{
+  "name": "@fntypescript/example-function-decorators",
+  "private": true,
+  "description": "Example: suppress TS1206 to allow decorators on standalone functions",
+  "scripts": {
+  },
+  "dependencies": {
+    "fntypescript": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}
