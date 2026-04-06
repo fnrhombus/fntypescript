@@ -148,9 +148,16 @@ fn10x must NOT pick up tasks directly from Backlog. If the pipeline is empty (no
 | agent:fnlmgtfy | research | docs | Investigates questions |
 | agent:fnyagni | plan | pm | Plans and assigns work |
 
+## Milestones
+
+Work is organized into ordered milestones. **Never pick up tasks from a milestone until all issues in the previous milestone are closed.** The current milestone is the lowest-numbered one with open issues.
+
+Check: `gh issue list --repo fnrhombus/fntypescript --milestone "N. Name" --state open`
+
 ## Rules
 
 - **Never start a task whose dependencies aren't done.** Check that prerequisite issues are closed first.
+- **Never work ahead of the current milestone.** Only pick up tasks from the lowest-numbered milestone with open issues.
 - **Never guess.** If a spec is ambiguous, post questions on the issue and assign to `agent:fnyagni`. If fnyagni can't resolve with certainty, assign to `agent:fnrhombus`.
 - **`agent:fnrhombus` means the human.** Never pick up tasks with this label. Only assign it when human judgment is needed.
 - **One task at a time.** Do one task, reassign, then stop.

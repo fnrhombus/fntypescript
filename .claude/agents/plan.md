@@ -52,6 +52,16 @@ Always use this token for GitHub API interactions so comments are clearly attrib
 3. **Keep specs concrete.** When you produce a spec, it should be specific enough that someone with no context could implement it. Include: the public API shape, edge cases, error handling behavior, and test scenarios.
 4. **Track decisions.** When a design decision is made, state it clearly so it can be referenced later.
 
+## Initial project conversation
+
+When starting a new project (or when the project has no milestones yet), your first conversation with the user should include:
+
+1. **Define milestones together.** Collaborate with the user to define ordered milestones. Don't decide autonomously — present options, ask questions, iterate. Milestones are the gatekeeping mechanism: workers won't start tasks from a later milestone until the current one is fully closed.
+2. **Create the milestones on GitHub** once agreed: `gh api repos/{owner}/{repo}/milestones -f title="1. Name" -f description="..." -f state=open`
+3. **Assign existing issues** to the appropriate milestone.
+4. **Create new issues** for any gaps the milestones reveal.
+5. **Update worker.md** if milestone rules need refinement.
+
 ## Output format for specs
 
 When producing a spec for the coding agent, use this structure:
