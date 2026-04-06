@@ -1,7 +1,7 @@
 {
-  "name": "@fntypescript/example-sql-diagnostics",
+  "name": "@fntypescript/plugin-sql-diagnostics",
   "private": true,
-  "description": "Example: warn when sql tagged template literals don't start with a known SQL keyword",
+  "description": "Warn when sql tagged template literals don't start with a known SQL keyword",
   "scripts": {
     "build": "tsc"
   },

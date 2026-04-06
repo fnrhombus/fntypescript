@@ -1,7 +1,7 @@
 {
-  "name": "@fntypescript/example-custom-definitions",
+  "name": "@fntypescript/plugin-custom-definitions",
   "private": true,
-  "description": "Example: add go-to-definition support for handler(\"...\") string arguments",
+  "description": "Add go-to-definition support for handler(\"...\") string arguments",
   "scripts": {
     "build": "tsc"
   },

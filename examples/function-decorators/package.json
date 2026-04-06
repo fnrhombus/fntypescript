@@ -1,7 +1,7 @@
 {
-  "name": "@fntypescript/example-function-decorators",
+  "name": "@fntypescript/plugin-function-decorators",
   "private": true,
-  "description": "Example: suppress TS1206 to allow decorators on standalone functions",
+  "description": "Suppress TS1206 to allow decorators on standalone functions",
   "scripts": {
     "prepare": "ts-patch install -s",
     "build": "tspc"

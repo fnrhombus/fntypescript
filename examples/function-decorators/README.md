@@ -22,60 +22,9 @@ function greet(name) { return `Hello, ${name}!`; }
 greet = log(greet);
 ```
 
-## How to use it in your own project
+## Setup
 
-### 1. Install dependencies
-
-```bash
-pnpm add fntypescript
-pnpm add -D ts-patch ts-node typescript
-```
-
-### 2. Create your plugin file
-
-See [`src/plugin.ts`](src/plugin.ts) for the full implementation. The key parts:
-
-- **`definePlugin({ ... })`** — the fntypescript Language Service plugin that filters TS1206 diagnostics in your editor
-- **`export function transformer(...)`** — the ts-patch compiler transformer that strips TS1206 at build time and emits decorator application code
-
-### 3. Configure tsconfig.json
-
-```json
-{
-  "compilerOptions": {
-    "experimentalDecorators": true,
-    "plugins": [
-      { "name": "fntypescript" },
-      { "transform": "./src/plugin.ts", "import": "transformer" }
-    ]
-  }
-}
-```
-
-The `plugins` array has two entries:
-- **`"name": "fntypescript"`** — tells tsserver to load the Language Service plugin (editor-time)
-- **`"transform": "./src/plugin.ts"`** — tells ts-patch to load the compiler transformer (build-time)
-
-### 4. Patch TypeScript and build
-
-```bash
-# Patch tsc to support transformer plugins (run once after install)
-npx ts-patch install -s
-
-# Build with the patched compiler
-npx tspc
-```
-
-Or add to your package.json:
-
-```json
-{
-  "scripts": {
-    "prepare": "ts-patch install -s",
-    "build": "tspc"
-  }
-}
-```
+Register this plugin in your fntypescript configuration. See the [demo project](../demo/) for a complete multi-plugin example.
 
 ## How it works
 

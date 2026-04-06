@@ -1,7 +1,7 @@
 {
-  "name": "@fntypescript/example-styled-completions",
+  "name": "@fntypescript/plugin-styled-completions",
   "private": true,
-  "description": "Example: provide CSS property completions inside css tagged template literals",
+  "description": "Provide CSS property completions inside css tagged template literals",
   "scripts": {
     "build": "tsc"
   },

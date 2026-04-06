@@ -1,7 +1,7 @@
 {
-  "name": "@fntypescript/example-graphql-diagnostics",
+  "name": "@fntypescript/plugin-graphql-diagnostics",
   "private": true,
-  "description": "Example: report diagnostics for empty gql tagged template literals",
+  "description": "Report diagnostics for empty gql tagged template literals",
   "scripts": {
     "build": "tsc"
   },

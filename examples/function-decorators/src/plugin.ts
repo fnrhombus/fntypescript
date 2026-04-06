@@ -36,7 +36,7 @@
  * output, we unlock something the parser already supports.
  */
 
-import { definePlugin } from "fntypescript/define-plugin.js";
+import { definePlugin } from "fntypescript";
 import type ts from "typescript";
 
 // =====================================================================
