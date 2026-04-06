@@ -470,7 +470,21 @@ def run_planner():
                 proc.kill()
 
         out_thread.join(timeout=5)
-        return True
+
+        # Check if the planner actually created new tasks
+        check = subprocess.run(
+            ["gh", "issue", "list", "--repo", REPO, "--state", "open",
+             "--json", "labels", "--jq",
+             '[.[] | select(.labels | map(.name) | any(startswith("agent:")))] | length'],
+            capture_output=True, text=True, timeout=30
+        )
+        new_tasks = int(check.stdout.strip() or "0") if check.returncode == 0 else 0
+        if new_tasks > 0:
+            print(f"{GREEN}{ts()} [{WORKER_ID}] Planner created {new_tasks} task(s).{RESET}")
+            return True
+        else:
+            print(f"{DIM}{ts()} [{WORKER_ID}] Planner ran but no new tasks.{RESET}")
+            return False
     finally:
         fcntl.flock(lock_fd, fcntl.LOCK_UN)
         lock_fd.close()
