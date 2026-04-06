@@ -1,4 +1,4 @@
-import { definePlugin } from "fntypescript/define-plugin.js";
+import { definePlugin } from "fntypescript";
 import type ts from "typescript";
 
 const CSS_PROPERTIES = [
@@ -21,7 +21,7 @@ export const styledCompletions = definePlugin({
 
     const cssEntries: ts.CompletionEntry[] = CSS_PROPERTIES.map((name) => ({
       name,
-      kind: ts.ScriptElementKind.unknown,
+      kind: ts.ScriptElementKind.memberVariableElement,
       sortText: "0",
       kindModifiers: "",
     }));

@@ -1,4 +1,4 @@
-import { definePlugin } from "fntypescript/define-plugin.js";
+import { definePlugin } from "fntypescript";
 import type ts from "typescript";
 
 const SQL_KEYWORDS = ["SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER"];
@@ -31,8 +31,9 @@ export const sqlDiagnostics = definePlugin({
           ? node.template.text
           : node.template.head.text;
 
-        const firstWord = templateText.trim().split(/\s+/)[0]?.toUpperCase() ?? "";
-        if (!SQL_KEYWORDS.includes(firstWord)) {
+        const trimmed = templateText.trim();
+        const firstWord = trimmed.split(/\s+/)[0]?.toUpperCase() ?? "";
+        if (trimmed && !SQL_KEYWORDS.includes(firstWord)) {
           extra.push({
             file: sourceFile,
             start: node.getStart(sourceFile),

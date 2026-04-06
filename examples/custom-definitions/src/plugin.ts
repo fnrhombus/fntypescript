@@ -1,7 +1,5 @@
-import { definePlugin } from "fntypescript/define-plugin.js";
+import { definePlugin } from "fntypescript";
 import type ts from "typescript";
-import * as path from "path";
-import * as fs from "fs";
 
 export const customDefinitions = definePlugin({
   name: "custom-definitions",
@@ -17,8 +15,9 @@ export const customDefinitions = definePlugin({
     const handlerArg = findHandlerStringAtPosition(ts, sourceFile, position);
     if (!handlerArg) return prior;
 
-    const targetFile = path.join(path.dirname(fileName), "handlers", `${handlerArg.text}.ts`);
-    if (!fs.existsSync(targetFile)) return prior;
+    const dir = fileName.substring(0, fileName.lastIndexOf("/"));
+    const targetFile = dir + "/handlers/" + handlerArg.text + ".ts";
+    if (!program.getSourceFile(targetFile)) return prior;
 
     const definition: ts.DefinitionInfo = {
       fileName: targetFile,
