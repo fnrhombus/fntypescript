@@ -156,6 +156,61 @@ def release_task(issue_num, reason="done"):
     gh_comment(issue_num, f"RELEASE {WORKER_ID} — {reason}")
 
 
+def cleanup_worktrees():
+    """Remove stale worktrees and their branches."""
+    result = subprocess.run(
+        ["git", "worktree", "list", "--porcelain"],
+        capture_output=True, text=True, timeout=30
+    )
+    if result.returncode != 0:
+        return
+
+    main_worktree = None
+    stale = []
+    current = {}
+    for line in result.stdout.split("\n"):
+        if line.startswith("worktree "):
+            current = {"path": line.split(" ", 1)[1]}
+        elif line.startswith("branch "):
+            current["branch"] = line.split(" ", 1)[1].replace("refs/heads/", "")
+        elif line == "":
+            if current.get("path"):
+                if main_worktree is None:
+                    main_worktree = current["path"]
+                else:
+                    stale.append(current)
+            current = {}
+
+    for wt in stale:
+        path = wt["path"]
+        branch = wt.get("branch", "")
+        print(f"{DIM}Cleaning worktree: {path} ({branch}){RESET}")
+        subprocess.run(["git", "worktree", "remove", "--force", path],
+                       capture_output=True, text=True, timeout=30)
+        if branch and branch != "main":
+            subprocess.run(["git", "branch", "-D", branch],
+                           capture_output=True, text=True, timeout=30)
+
+    # Also clean up local branches that look like stale agent/feature branches
+    result = subprocess.run(
+        ["git", "branch", "--format", "%(refname:short)"],
+        capture_output=True, text=True, timeout=30
+    )
+    if result.returncode == 0:
+        for branch in result.stdout.strip().split("\n"):
+            branch = branch.strip()
+            if not branch or branch == "main":
+                continue
+            if branch.startswith(("worktree-agent-", "feat/")):
+                subprocess.run(["git", "branch", "-D", branch],
+                               capture_output=True, text=True, timeout=30)
+                print(f"{DIM}Deleted branch: {branch}{RESET}")
+
+    # Prune remote tracking branches
+    subprocess.run(["git", "remote", "prune", "origin"],
+                   capture_output=True, text=True, timeout=30)
+
+
 def format_tool_input(name, inp):
     if name == "Bash":
         return inp.get("command", "")
@@ -237,21 +292,29 @@ def output_reader(proc, done_event):
     sys.stdout.flush()
 
 
-def input_sender(proc):
-    """Read user input and forward as stream-json messages."""
+def input_sender(proc, done_event):
+    """Read user input and forward as stream-json messages. Exits when done_event is set."""
+    import select
     try:
-        while proc.poll() is None:
+        while proc.poll() is None and not done_event.is_set():
+            # Poll stdin with timeout so we can check done_event periodically
+            ready, _, _ = select.select([sys.stdin], [], [], 1.0)
+            if not ready:
+                continue
             try:
-                line = input(f"{WHITE_ON_BLUE} > {RESET} ")
+                line = sys.stdin.readline()
             except EOFError:
                 break
-            if not line.strip():
+            if not line:  # EOF
+                break
+            line = line.strip()
+            if not line:
                 continue
             msg = json.dumps({
                 "type": "user",
                 "message": {
                     "role": "user",
-                    "content": line.strip()
+                    "content": line
                 }
             })
             try:
@@ -313,8 +376,8 @@ def run_worker():
     out_thread = threading.Thread(target=output_reader, args=(proc, done_event), daemon=True)
     out_thread.start()
 
-    # Run input sender on main thread (handles ctrl+c)
-    input_sender(proc)
+    # Run input sender on main thread (handles ctrl+c, exits when done)
+    input_sender(proc, done_event)
 
     # Wait for the result message (up to 10 minutes beyond stdin EOF)
     done_event.wait(timeout=600)
@@ -337,6 +400,7 @@ def run_worker():
 
 def main():
     print(f"{BOLD}Worker {WORKER_ID} starting{RESET}")
+    cleanup_worktrees()
 
     while True:
         print(f"\n{YELLOW}=== Worker cycle ==={RESET}")
