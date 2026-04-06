@@ -23,10 +23,18 @@ import random
 import re
 import argparse
 
-# Human-readable worker names
+# Human-readable worker names (top 100 US names, SSA + Census data)
 WORKER_NAMES = [
-    "alice", "bob", "carol", "dave", "eve", "frank", "grace", "heidi",
-    "ivan", "judy", "karl", "luna", "mike", "nora", "oscar", "penny",
+    "aaron", "abigail", "adam", "alan", "albert", "alexander", "alexis", "alice", "amanda", "amber",
+    "andrea", "andrew", "angela", "anna", "anthony", "arthur", "ashley", "austin", "barbara", "benjamin",
+    "betty", "beverly", "brandon", "brenda", "brian", "brittany", "bruce", "carol", "carolyn", "catherine",
+    "charles", "charlotte", "cheryl", "christian", "christina", "christine", "christopher", "cynthia", "daniel", "danielle",
+    "david", "deborah", "denise", "dennis", "diana", "diane", "donald", "donna", "dorothy", "douglas",
+    "dylan", "edward", "elijah", "elizabeth", "emily", "emma", "eric", "ethan", "evelyn", "frances",
+    "frank", "gabriel", "gary", "george", "gerald", "grace", "gregory", "hannah", "harold", "heather",
+    "helen", "henry", "isabella", "jacob", "jacqueline", "james", "janet", "janice", "jason", "jean",
+    "jeffrey", "jennifer", "jeremy", "jessica", "joan", "john", "jonathan", "jordan", "joseph", "joshua",
+    "joyce", "juan", "judith", "julia", "julie", "justin", "karen", "katherine", "keith", "kelly",
 ]
 
 # ANSI colors
@@ -47,7 +55,8 @@ TRIAGE_COOLDOWN = 900  # 15 minutes between triage runs that find no work
 REPO = "fnrhombus/fntypescript"
 IDLE_SLEEP = 180
 
-WORKER_ID = f"{random.choice(WORKER_NAMES)}-{random.randint(10000, 99999)}"
+_worker_num = random.randint(10000, 99999)
+WORKER_ID = f"{WORKER_NAMES[_worker_num % len(WORKER_NAMES)]}-{_worker_num}"
 
 VERBOSE = False
 INTERACTIVE = False
@@ -263,7 +272,16 @@ def run_pr_fix(pr):
         f"Run pnpm run build && pnpm run test before pushing."
     )
 
-    return spawn_agent("code", prompt)
+    # Find linked issue for heartbeat (PR fixes are tied to an issue)
+    hb_issue = int(issue_refs[0]) if issue_refs else None
+    hb_stop = threading.Event()
+    if hb_issue:
+        hb_thread = threading.Thread(target=heartbeat_loop, args=(hb_issue, hb_stop), daemon=True)
+        hb_thread.start()
+    try:
+        return spawn_agent("code", prompt)
+    finally:
+        hb_stop.set()
 
 
 # ── Priority 3: Ready tasks ────────────────────────────────────────
@@ -306,6 +324,7 @@ def find_ready_task():
                     log(f"#{issue_num} is blocked, skipping...")
                 continue
 
+            release_stale_claims(issue_num)
             gh_comment(issue_num, f"CLAIM {WORKER_ID}")
             time.sleep(3)
 
@@ -380,7 +399,13 @@ def run_new_task(task):
         f"Create a PR targeting main when done. Reference #{issue_num} in the PR body."
     )
 
-    result = spawn_agent("code", prompt)
+    hb_stop = threading.Event()
+    hb_thread = threading.Thread(target=heartbeat_loop, args=(issue_num, hb_stop), daemon=True)
+    hb_thread.start()
+    try:
+        result = spawn_agent("code", prompt)
+    finally:
+        hb_stop.set()
 
     # Release the task
     if STOP_REQUESTED:
@@ -420,6 +445,15 @@ def run_triage():
     try:
         log("No work available — running triage...", MAGENTA)
 
+        # Snapshot task list before triage so we can detect genuinely new work
+        before = subprocess.run(
+            ["gh", "issue", "list", "--repo", REPO, "--state", "open",
+             "--label", "agent:fn10x",
+             "--json", "number", "--jq", "[.[].number]"],
+            capture_output=True, text=True, timeout=30
+        )
+        before_ids = set(json.loads(before.stdout.strip() or "[]")) if before.returncode == 0 else set()
+
         prompt = (
             "No tasks have agent: labels and no PRs need review. "
             f"Worker ID: {WORKER_ID}. "
@@ -429,17 +463,19 @@ def run_triage():
 
         spawn_agent("triage", prompt)
 
-        # Check if triage created new work
-        check = subprocess.run(
+        # Check if triage created new work (compare before/after)
+        after = subprocess.run(
             ["gh", "issue", "list", "--repo", REPO, "--state", "open",
              "--label", "agent:fn10x",
-             "--json", "number", "--jq", "length"],
+             "--json", "number", "--jq", "[.[].number]"],
             capture_output=True, text=True, timeout=30
         )
-        new_tasks = int(check.stdout.strip() or "0") if check.returncode == 0 else 0
+        after_ids = set(json.loads(after.stdout.strip() or "[]")) if after.returncode == 0 else set()
+        new_ids = after_ids - before_ids
 
-        if new_tasks > 0:
-            log(f"Triage created {new_tasks} task(s).", GREEN)
+        if new_ids:
+            id_list = ", ".join(f"#{n}" for n in sorted(new_ids))
+            log(f"Triage created {len(new_ids)} task(s): {id_list}", GREEN)
             if os.path.exists(TRIAGE_COOLDOWN_FILE):
                 os.remove(TRIAGE_COOLDOWN_FILE)
             return True
@@ -506,11 +542,70 @@ def spawn_agent(agent_type, prompt):
 
 # ── Claim protocol ──────────────────────────────────────────────────
 
+CLAIM_STALE_THRESHOLD = 1800  # 30 minutes — claims older than this are auto-released
+HEARTBEAT_INTERVAL = 1200  # 20 minutes — post bump before stale threshold
+
+
+def heartbeat_loop(issue_num, stop_event):
+    """Post periodic HEARTBEAT comments while a task is in progress."""
+    while not stop_event.wait(HEARTBEAT_INTERVAL):
+        if stop_event.is_set():
+            break
+        gh_comment(issue_num, f"HEARTBEAT {WORKER_ID}")
+        if VERBOSE:
+            log(f"Heartbeat posted on #{issue_num}", DIM)
+
+
+def release_stale_claims(issue_num):
+    """Release claims from dead workers (older than CLAIM_STALE_THRESHOLD with no RELEASE/HEARTBEAT)."""
+    result = subprocess.run(
+        ["gh", "issue", "view", str(issue_num), "--repo", REPO,
+         "--json", "comments", "--jq",
+         '.comments | map(select(.body | startswith("CLAIM ") or startswith("RELEASE ") or startswith("HEARTBEAT "))) | .[] | "\(.createdAt)\t\(.body)"'],
+        capture_output=True, text=True, timeout=30
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return
+
+    lines = [l.strip() for l in result.stdout.strip().split("\n") if l.strip()]
+    active_claims = {}  # worker_id -> latest timestamp (CLAIM or HEARTBEAT)
+
+    for line in lines:
+        parts = line.split("\t", 1)
+        if len(parts) != 2:
+            continue
+        ts, body = parts
+        if body.startswith("CLAIM "):
+            worker = body[6:]
+            active_claims[worker] = ts
+        elif body.startswith("HEARTBEAT "):
+            worker = body[10:]
+            if worker in active_claims:
+                active_claims[worker] = ts  # refresh timestamp
+        elif body.startswith("RELEASE "):
+            worker = body.split(" ", 1)[1].split(" ", 1)[0]
+            active_claims.pop(worker, None)
+
+    now = time.time()
+    for worker, ts in active_claims.items():
+        if worker == WORKER_ID:
+            continue
+        try:
+            from datetime import datetime, timezone
+            last_seen = datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+            age = now - last_seen
+            if age > CLAIM_STALE_THRESHOLD:
+                log(f"Releasing stale claim from {worker} on #{issue_num} ({int(age)}s old)", YELLOW)
+                gh_comment(issue_num, f"RELEASE {worker} — stale claim auto-released by {WORKER_ID}")
+        except (ValueError, OSError):
+            pass
+
+
 def check_claim_won(issue_num):
     result = subprocess.run(
         ["gh", "issue", "view", str(issue_num), "--repo", REPO,
          "--json", "comments", "--jq",
-         '.comments | map(select(.body | startswith("CLAIM ") or startswith("RELEASE "))) | .[-5:] | .[] | .body'],
+         '.comments | map(select(.body | startswith("CLAIM ") or startswith("RELEASE "))) | .[] | .body'],
         capture_output=True, text=True, timeout=30
     )
     if result.returncode != 0:

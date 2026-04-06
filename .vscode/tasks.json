@@ -10,7 +10,8 @@
       "presentation": {
         "group": "workers",
         "reveal": "always",
-        "panel": "dedicated"
+        "panel": "dedicated",
+        "close": true
       }
     },
     {
@@ -22,7 +23,8 @@
       "presentation": {
         "group": "workers",
         "reveal": "always",
-        "panel": "dedicated"
+        "panel": "dedicated",
+        "close": true
       }
     },
     {
@@ -34,7 +36,8 @@
       "presentation": {
         "group": "workers",
         "reveal": "always",
-        "panel": "dedicated"
+        "panel": "dedicated",
+        "close": true
       }
     },
     {
