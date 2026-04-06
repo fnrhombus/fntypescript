@@ -41,6 +41,8 @@ WHITE_ON_BLUE = "\033[97;44m"
 
 LOCK_FILE = "/tmp/fntypescript-worker.lock"
 PLANNER_LOCK_FILE = "/tmp/fntypescript-planner.lock"
+PLANNER_COOLDOWN_FILE = "/tmp/fntypescript-planner-cooldown"
+PLANNER_COOLDOWN = 900  # 15 minutes between planner runs that find no work
 REPO = "fnrhombus/fntypescript"
 IDLE_SLEEP = 180  # seconds to sleep when no work available
 
@@ -411,6 +413,14 @@ def input_sender(proc, done_event):
 def run_planner():
     """Run the planner when no tasks are available. Uses a lock so only one worker does this.
     Returns True if the planner ran (work may now be available), False if skipped."""
+    # Check cooldown: don't re-run the planner if it recently found nothing
+    if os.path.exists(PLANNER_COOLDOWN_FILE):
+        age = time.time() - os.path.getmtime(PLANNER_COOLDOWN_FILE)
+        if age < PLANNER_COOLDOWN:
+            if VERBOSE:
+                print(f"{DIM}{ts()} [{WORKER_ID}] Planner on cooldown ({int(PLANNER_COOLDOWN - age)}s remaining)...{RESET}")
+            return False
+
     lock_fd = open(PLANNER_LOCK_FILE, "w")
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -481,9 +491,14 @@ def run_planner():
         new_tasks = int(check.stdout.strip() or "0") if check.returncode == 0 else 0
         if new_tasks > 0:
             print(f"{GREEN}{ts()} [{WORKER_ID}] Planner created {new_tasks} task(s).{RESET}")
+            # Clear cooldown so workers pick up immediately
+            if os.path.exists(PLANNER_COOLDOWN_FILE):
+                os.remove(PLANNER_COOLDOWN_FILE)
             return True
         else:
-            print(f"{DIM}{ts()} [{WORKER_ID}] Planner ran but no new tasks.{RESET}")
+            print(f"{DIM}{ts()} [{WORKER_ID}] Planner ran but no new tasks. Cooldown {PLANNER_COOLDOWN}s.{RESET}")
+            # Set cooldown
+            open(PLANNER_COOLDOWN_FILE, "w").close()
             return False
     finally:
         fcntl.flock(lock_fd, fcntl.LOCK_UN)
