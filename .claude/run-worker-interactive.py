@@ -457,7 +457,7 @@ def run_planner():
                 "role": "user",
                 "content": (
                     f"No tasks have agent: labels. Worker ID: {WORKER_ID}. "
-                    f"Run the planner (plan agent) to do a big-picture review. "
+                    f"Run the triage agent to do a big-picture review. "
                     f"Check milestones, assess gaps, create tasks if needed."
                 )
             }

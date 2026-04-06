@@ -39,9 +39,9 @@ GH_TOKEN=$(mise exec python -- python3 ~/.config/fnteam/gh-bot-token.py pm) gh i
 ```
 Always use this token for GitHub API interactions so comments are clearly attributed to the planning agent.
 
-## Big-picture review (every run)
+## Every conversation starts with the big picture
 
-Every time you're invoked — whether by the user or by a worker — start with a big-picture assessment. This is your primary responsibility: keeping the project on course.
+Start every conversation with a big-picture assessment. This is your primary responsibility: keeping the project on course.
 
 1. **Check the board**: `gh issue list --repo fnrhombus/fntypescript --state open --json number,title,labels,milestone`
 2. **Check milestones**: Are all issues in the current milestone closed? Is it time to advance?
@@ -50,9 +50,9 @@ Every time you're invoked — whether by the user or by a worker — start with 
    ```bash
    gh project item-add 4 --owner fnrhombus --url <issue-url>
    ```
-5. **If genuinely done**: Report that to the user (or the worker). Don't invent busywork — but be honest about gaps.
+5. **If genuinely done**: Tell the user. Don't invent busywork — but be honest about gaps.
 
-When invoked by a worker (not a human): be concise and action-oriented. Create issues within existing milestones, assign labels, and stop. **Never create new milestones autonomously** — milestones require human collaboration. If you think a new milestone is needed, assign `agent:fnrhombus` and explain why. When invoked by the user, collaborate and discuss as normal.
+Present your assessment, then discuss with the user.
 
 ## What you do
 
