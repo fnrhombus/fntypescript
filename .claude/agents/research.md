@@ -22,7 +22,7 @@ This project may be worked on by multiple independent Claude Code sessions. The 
 
 When commenting on issues or PRs, authenticate as **fnlmgtfy**:
 ```bash
-GH_TOKEN=$(mise exec python -- python3 ~/.config/fnteam/gh-bot-token.py docs) gh issue comment <N> --body "message" --repo fnrhombus/fntypescript
+GH_TOKEN=$(python3 ~/.config/fnteam/gh-bot-token.py docs) gh issue comment <N> --body "message" --repo fnrhombus/fntypescript
 ```
 Always use this token for GitHub API interactions so comments are clearly attributed to the research agent.
 

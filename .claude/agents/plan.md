@@ -35,7 +35,7 @@ This project may be worked on by multiple independent Claude Code sessions, each
 
 When commenting on issues or PRs, authenticate as **fnyagni**:
 ```bash
-GH_TOKEN=$(mise exec python -- python3 ~/.config/fnteam/gh-bot-token.py pm) gh issue comment <N> --body "message" --repo fnrhombus/fntypescript
+GH_TOKEN=$(python3 ~/.config/fnteam/gh-bot-token.py pm) gh issue comment <N> --body "message" --repo fnrhombus/fntypescript
 ```
 Always use this token for GitHub API interactions so comments are clearly attributed to the planning agent.
 

@@ -19,14 +19,13 @@ packages/
 examples/           — example projects (workspace members)
 ```
 
-- `mise exec -- pnpm run build` — build all packages
-- `mise exec -- pnpm run test` — build then test
+- `pnpm run build` — build all packages
+- `pnpm run test` — build then test
 - Core package has NO test dependencies. Tests live in `@fntypescript/tests`.
 
 ## Environment
 
-- **Node/pnpm require mise** — `node` and `pnpm` are NOT on the system PATH. Always use `mise exec -- pnpm run test`, `mise exec -- pnpm run build`, etc. A `.mise.toml` is in the project root. Never use bare `npm`, `node`, `pnpm`, or `npx` commands.
-- **Python requires mise** — Same for Python: `mise exec python -- python3 ...`
+- **mise manages toolchains** — A `.mise.toml` in the project root defines node, pnpm, and python versions. Tools are available on PATH via mise shims — use `pnpm`, `node`, `python3` directly (no `mise exec` prefix needed).
 
 ## Project Coordination
 

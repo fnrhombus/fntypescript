@@ -55,7 +55,7 @@ gh project item-edit --project-id PVT_kwHOACZSnM4BTvD0 --id "$ITEM_ID" --field-i
 
 Authenticate as **fnyagni**:
 ```bash
-GH_TOKEN=$(mise exec python -- python3 ~/.config/fnteam/gh-bot-token.py pm) gh issue comment <N> --body "message" --repo fnrhombus/fntypescript
+GH_TOKEN=$(python3 ~/.config/fnteam/gh-bot-token.py pm) gh issue comment <N> --body "message" --repo fnrhombus/fntypescript
 ```
 
 ## Milestone rules

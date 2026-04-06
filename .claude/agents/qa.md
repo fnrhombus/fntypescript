@@ -58,10 +58,10 @@ PASS or FAIL — one sentence why.
 
 ```bash
 # Approve (PASS)
-GH_TOKEN=$(mise exec python -- python3 ~/.config/fnteam/gh-bot-token.py qa) gh pr review <PR> --approve --body "<summary>" --repo fnrhombus/fntypescript
+GH_TOKEN=$(python3 ~/.config/fnteam/gh-bot-token.py qa) gh pr review <PR> --approve --body "<summary>" --repo fnrhombus/fntypescript
 
 # Request changes (FAIL)
-GH_TOKEN=$(mise exec python -- python3 ~/.config/fnteam/gh-bot-token.py qa) gh pr review <PR> --request-changes --body "<summary>" --repo fnrhombus/fntypescript
+GH_TOKEN=$(python3 ~/.config/fnteam/gh-bot-token.py qa) gh pr review <PR> --request-changes --body "<summary>" --repo fnrhombus/fntypescript
 ```
 
 ## What triggers a FAIL

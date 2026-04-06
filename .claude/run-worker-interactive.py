@@ -53,7 +53,7 @@ VERBOSE = False
 INTERACTIVE = False
 STOP_REQUESTED = False
 
-QA_TOKEN_CMD = ["mise", "exec", "python", "--", "python3",
+QA_TOKEN_CMD = ["python3",
                 os.path.expanduser("~/.config/fnteam/gh-bot-token.py"), "qa"]
 
 
@@ -260,7 +260,7 @@ def run_pr_fix(pr):
     prompt += (
         f"Read the full PR diff: gh pr diff {pr_num} --repo {REPO}\n"
         f"Fix the issues raised in the review, then push to branch {branch}. "
-        f"Run mise exec -- pnpm run build && mise exec -- pnpm run test before pushing."
+        f"Run pnpm run build && pnpm run test before pushing."
     )
 
     return spawn_agent("code", prompt)
@@ -376,7 +376,7 @@ def run_new_task(task):
         f"{worktree_info}\n\n"
         f"## Spec\n\n{spec}\n\n"
         f"Write tests first, then implementation. "
-        f"Run mise exec -- pnpm run build && mise exec -- pnpm run test before pushing. "
+        f"Run pnpm run build && pnpm run test before pushing. "
         f"Create a PR targeting main when done. Reference #{issue_num} in the PR body."
     )
 
