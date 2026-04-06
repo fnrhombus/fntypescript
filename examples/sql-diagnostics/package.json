@@ -1,0 +1,14 @@
+{
+  "name": "@fntypescript/example-sql-diagnostics",
+  "private": true,
+  "description": "Example: validate sql tagged template literals start with a SQL keyword",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "fntypescript": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "@fntypescript/example-custom-definitions",
+  "private": true,
+  "description": "Example: go-to-definition for handler() call string arguments",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "fntypescript": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}

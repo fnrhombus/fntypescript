@@ -1,0 +1,14 @@
+{
+  "name": "@fntypescript/example-enhanced-hover",
+  "private": true,
+  "description": "Example: augment QuickInfo hover tooltips for symbols whose type contains 'Model'",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "fntypescript": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}

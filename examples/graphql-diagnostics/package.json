@@ -1,0 +1,14 @@
+{
+  "name": "@fntypescript/example-graphql-diagnostics",
+  "private": true,
+  "description": "Example: validate gql tagged template literals for empty queries",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "fntypescript": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}
