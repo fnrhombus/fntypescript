@@ -34,7 +34,7 @@ Within each tier, use P0 > P1 > P2.
 
 Determine the agent from the `agent:` label:
 - **agent:fn10x** → use the `code` agent
-- **agent:fnnitpick** → use the `qa` agent
+- **agent:fnnitpick** → use the `qa` agent (rare — only for complex PRs needing spec review; CI handles build/test gating)
 - **agent:fnlmgtfy** → use the `research` agent
 - **agent:fnyagni** → use the `plan` agent
 
@@ -100,8 +100,16 @@ The next step depends on which agent just finished and whether it succeeded:
 
 ### fn10x (code agent) completed successfully
 1. Remove `agent:fn10x` label.
-2. Add `agent:fnnitpick` label — QA reviews the PR before anything else happens.
-3. Comment as fn10x on the issue: what was done, link to the PR.
+2. Comment as fn10x on the issue: what was done, link to the PR.
+3. Enable auto-merge and request human review:
+   ```bash
+   gh pr edit <PR> --add-reviewer fnrhombus --repo fnrhombus/fntypescript
+   gh pr merge <PR> --auto --squash --repo fnrhombus/fntypescript
+   ```
+4. Add `agent:fnrhombus` label so the human knows to review.
+5. Update the project board: set the issue to "Done".
+
+CI (GitHub Actions) gates merging — runs build + tests automatically on every PR. No need to burn tokens on test runs.
 
 ### fn10x (code agent) says the task is too large
 1. Remove `agent:fn10x` label.
@@ -113,22 +121,6 @@ The next step depends on which agent just finished and whether it succeeded:
 2. Comment as fn10x on the issue listing the specific questions.
 3. If fnyagni can confidently resolve them: add `agent:fnyagni` label.
 4. If there's ANY ambiguity that fnyagni can't resolve with certainty: add `agent:fnrhombus` label — the human decides.
-
-### fnnitpick (QA agent) completed — PASS
-1. Remove `agent:fnnitpick` label.
-2. Approve the PR and request your review as fnnitpick:
-   ```bash
-   GH_TOKEN=$(mise exec python -- python3 ~/.config/fnteam/gh-bot-token.py qa) gh pr review <PR> --approve --body "QA passed. <verdict summary>" --repo fnrhombus/fntypescript
-   gh pr edit <PR> --add-reviewer fnrhombus --repo fnrhombus/fntypescript
-   gh pr merge <PR> --auto --squash --repo fnrhombus/fntypescript
-   ```
-3. Auto-merge will trigger once you approve. Add `agent:fnrhombus` label so you know it needs your review.
-4. Update the project board: set the issue to "Done".
-
-### fnnitpick (QA agent) completed — FAIL
-1. Remove `agent:fnnitpick` label.
-2. Add `agent:fn10x` label — back to the code agent with the QA findings.
-3. Comment as fnnitpick with the QA verdict and what needs fixing.
 
 ### fnlmgtfy (research agent) completed
 1. Remove `agent:fnlmgtfy` label.
