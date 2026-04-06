@@ -173,6 +173,42 @@ describe("loadSubPlugins", () => {
     );
   });
 
+  it("allows duplicate plugin names (both are loaded in order)", () => {
+    const plugin = definePlugin({ name: "foo" });
+    const resolveModule = vi.fn((name: string) => name);
+    const requireFn = vi.fn(() => plugin);
+    const logger = makeMockLogger();
+
+    const result = loadSubPlugins(
+      { plugins: ["foo", "foo"] },
+      resolveModule,
+      logger,
+      requireFn,
+    );
+
+    expect(result).toHaveLength(2);
+    expect(result[0].name).toBe("foo");
+    expect(result[1].name).toBe("foo");
+  });
+
+  it("passes relative paths through resolveModule", () => {
+    const plugin = definePlugin({ name: "local-plugin" });
+    const resolveModule = vi.fn((_name: string) => "/project/my-local-plugin/index.js");
+    const requireFn = vi.fn(() => plugin);
+    const logger = makeMockLogger();
+
+    const result = loadSubPlugins(
+      { plugins: ["./my-local-plugin"] },
+      resolveModule,
+      logger,
+      requireFn,
+    );
+
+    expect(result).toHaveLength(1);
+    expect(resolveModule).toHaveBeenCalledWith("./my-local-plugin");
+    expect(requireFn).toHaveBeenCalledWith("/project/my-local-plugin/index.js");
+  });
+
   it("one bad plugin does not block others", () => {
     const pluginA = definePlugin({ name: "plugin-a" });
     const pluginC = definePlugin({ name: "plugin-c" });
