@@ -20,6 +20,11 @@
       "import": "./dist/proxy.js",
       "require": "./dist/proxy.js"
     },
+    "./loader.js": {
+      "types": "./dist/loader.d.ts",
+      "import": "./dist/loader.js",
+      "require": "./dist/loader.js"
+    },
     "./types.js": {
       "types": "./dist/types.d.ts"
     }

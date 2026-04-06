@@ -1,7 +1,11 @@
 import type ts from "typescript/lib/tsserverlibrary";
 import { createLanguageServiceProxy } from "./proxy.js";
 import { definePlugin } from "./define-plugin.js";
+import { loadSubPlugins } from "./loader.js";
 import type { HookableService, HookArgs, HookContext, HookName, HookResult, Plugin, PluginDefinition } from "./types.js";
+
+// `require` is available at runtime (TS server runs in CJS Node); declare it for tsc.
+declare const require: (id: string) => unknown;
 
 /** All LanguageService method names that fntypescript hooks into */
 const HOOKABLE_METHODS: readonly HookName[] = [
@@ -86,18 +90,41 @@ function init(modules: {
 }): ts.server.PluginModule & { getStoredConfig: (proxy: ts.LanguageService) => unknown } {
   _typescript = modules.typescript;
 
-  function create(info: ts.server.PluginCreateInfo, plugins: Plugin[] = []): ts.LanguageService {
+  function create(info: ts.server.PluginCreateInfo, plugins?: Plugin[]): ts.LanguageService {
     const proxy = createLanguageServiceProxy(info.languageService);
     _configs.set(proxy, info.config);
 
-    if (plugins.length === 0) {
+    const rawConfig = (info.config ?? {}) as Record<string, unknown>;
+
+    let resolvedPlugins: Plugin[];
+    if (plugins !== undefined) {
+      resolvedPlugins = plugins;
+    } else {
+      // Only access project services when there are plugins to load
+      const rawPlugins = rawConfig["plugins"];
+      if (rawPlugins === undefined || (Array.isArray(rawPlugins) && rawPlugins.length === 0)) {
+        resolvedPlugins = [];
+      } else {
+        const serverLogger = info.project.projectService.logger;
+        const projectDir = info.project.getCurrentDirectory();
+        const resolveModule = (moduleName: string): string => {
+          if (moduleName.startsWith(".") || moduleName.startsWith("..")) {
+            const pathModule = require("path") as { resolve: (...args: string[]) => string };
+          return pathModule.resolve(projectDir, moduleName);
+          }
+          return moduleName;
+        };
+        resolvedPlugins = loadSubPlugins(rawConfig, resolveModule, serverLogger, require as (id: string) => unknown);
+      }
+    }
+
+    if (resolvedPlugins.length === 0) {
       return proxy;
     }
 
     const serverLogger = info.project.projectService.logger;
 
     // Build a lookup from plugin name -> config slice from the tsconfig plugins array
-    const rawConfig = (info.config ?? {}) as Record<string, unknown>;
     const pluginsArray = Array.isArray(rawConfig["plugins"])
       ? (rawConfig["plugins"] as Record<string, unknown>[])
       : [];
@@ -126,7 +153,7 @@ function init(modules: {
 
         const composed = composeHook(
           baseMethod.bind(proxy),
-          plugins,
+          resolvedPlugins,
           hookName,
           makeContext,
         );
