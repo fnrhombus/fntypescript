@@ -261,16 +261,21 @@ def output_reader(proc, done_event):
                 print(f"{DIM}── session: {msg.get('session_id', '?')[:8]}… model: {model} ──{RESET}")
 
         elif t == "assistant":
-            if VERBOSE:
-                content = msg.get("message", {}).get("content", [])
-                for block in content:
-                    if block.get("type") == "text":
+            content = msg.get("message", {}).get("content", [])
+            for block in content:
+                if block.get("type") == "text":
+                    if VERBOSE:
                         print(f"{BOLD}{block['text']}{RESET}")
-                    elif block.get("type") == "tool_use":
-                        name = block.get("name", "?")
-                        inp = block.get("input", {})
-                        desc = format_tool_input(name, inp)
-                        print(f"  {CYAN}▶ {name}{RESET} {DIM}{truncate(desc)}{RESET}")
+                    else:
+                        # In quiet mode, print first line of text as a status update
+                        first_line = block["text"].strip().split("\n")[0]
+                        if first_line:
+                            print(f"{DIM}[{WORKER_ID}] {truncate(first_line, 120)}{RESET}")
+                elif block.get("type") == "tool_use" and VERBOSE:
+                    name = block.get("name", "?")
+                    inp = block.get("input", {})
+                    desc = format_tool_input(name, inp)
+                    print(f"  {CYAN}▶ {name}{RESET} {DIM}{truncate(desc)}{RESET}")
 
         elif t == "user":
             if VERBOSE:
