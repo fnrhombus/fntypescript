@@ -12,6 +12,29 @@ importers:
         specifier: ^2
         version: 2.9.4
 
+  examples/custom-definitions:
+    dependencies:
+      fntypescript:
+        specifier: workspace:*
+        version: link:../../packages/fntypescript
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.17
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  examples/enhanced-hover:
+    dependencies:
+      fntypescript:
+        specifier: workspace:*
+        version: link:../../packages/fntypescript
+    devDependencies:
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   examples/function-decorators:
     dependencies:
       fntypescript:
@@ -24,6 +47,36 @@ importers:
       ts-patch:
         specifier: ^3.3.0
         version: 3.3.0
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  examples/graphql-diagnostics:
+    dependencies:
+      fntypescript:
+        specifier: workspace:*
+        version: link:../../packages/fntypescript
+    devDependencies:
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  examples/sql-diagnostics:
+    dependencies:
+      fntypescript:
+        specifier: workspace:*
+        version: link:../../packages/fntypescript
+    devDependencies:
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  examples/styled-completions:
+    dependencies:
+      fntypescript:
+        specifier: workspace:*
+        version: link:../../packages/fntypescript
+    devDependencies:
       typescript:
         specifier: ^5.7.0
         version: 5.9.3

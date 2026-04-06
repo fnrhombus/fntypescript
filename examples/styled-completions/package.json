@@ -1,0 +1,14 @@
+{
+  "name": "@fntypescript/example-styled-completions",
+  "private": true,
+  "description": "Example: provide CSS property completions inside css tagged template literals",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "fntypescript": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}

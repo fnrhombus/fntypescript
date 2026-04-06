@@ -1,0 +1,14 @@
+{
+  "name": "@fntypescript/example-sql-diagnostics",
+  "private": true,
+  "description": "Example: warn when sql tagged template literals don't start with a known SQL keyword",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "fntypescript": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}

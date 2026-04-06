@@ -177,8 +177,13 @@ function init(modules: {
   return { create, getExternalFiles, getStoredConfig };
 }
 
-// Attach public API as properties so consumers can import them even in CJS contexts
-// where `export =` is used.
+// Attach definePlugin as a property on init so it is accessible at runtime.
+// The namespace declaration below merges with the function declaration so that
+// `import { definePlugin } from 'fntypescript'` resolves at the type level.
 (init as typeof init & { definePlugin: typeof definePlugin }).definePlugin = definePlugin;
+
+namespace init {
+  export declare const definePlugin: typeof import("./define-plugin.js").definePlugin;
+}
 
 export = init;
