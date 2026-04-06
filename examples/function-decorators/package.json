@@ -3,11 +3,15 @@
   "private": true,
   "description": "Example: suppress TS1206 to allow decorators on standalone functions",
   "scripts": {
+    "prepare": "ts-patch install -s",
+    "build": "tspc"
   },
   "dependencies": {
     "fntypescript": "workspace:*"
   },
   "devDependencies": {
+    "ts-node": "^10.9.2",
+    "ts-patch": "^3.3.0",
     "typescript": "^5.7.0"
   }
 }
