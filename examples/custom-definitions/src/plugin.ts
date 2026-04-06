@@ -25,7 +25,7 @@ export const customDefinitions = definePlugin({
       name: handlerArg.text,
       kind: ts.ScriptElementKind.moduleElement,
       containerName: "handlers",
-      containerKind: ts.ScriptElementKind.moduleElement,
+      containerKind: ts.ScriptElementKind.directory,
     };
     const textSpan: ts.TextSpan = {
       start: handlerArg.getStart(sourceFile),

@@ -11,7 +11,7 @@ route/handler names to files on disk.
 
 - Using the `getDefinitionAndBoundSpan` hook to inject custom `DefinitionInfo`
 - Walking the AST to find a specific call pattern and extract a string argument
-- Using `fs.existsSync` to conditionally add definitions only for real files
+- Using `program.getSourceFile()` to conditionally add definitions only for real files
 
 ## Setup
 
