@@ -40,6 +40,7 @@ BLUE = "\033[34m"
 WHITE_ON_BLUE = "\033[97;44m"
 
 LOCK_FILE = "/tmp/fntypescript-worker.lock"
+PLANNER_LOCK_FILE = "/tmp/fntypescript-planner.lock"
 REPO = "fnrhombus/fntypescript"
 IDLE_SLEEP = 180  # seconds to sleep when no work available
 
@@ -407,6 +408,74 @@ def input_sender(proc, done_event):
         pass
 
 
+def run_planner():
+    """Run the planner when no tasks are available. Uses a lock so only one worker does this.
+    Returns True if the planner ran (work may now be available), False if skipped."""
+    lock_fd = open(PLANNER_LOCK_FILE, "w")
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (BlockingIOError, OSError):
+        # Another worker is already running the planner
+        if VERBOSE:
+            print(f"{DIM}{ts()} [{WORKER_ID}] Another worker is running the planner, skipping...{RESET}")
+        lock_fd.close()
+        return False
+
+    try:
+        print(f"{MAGENTA}{ts()} [{WORKER_ID}] No tasks available — running planner...{RESET}")
+
+        cmd = [
+            "claude", "--agent", "worker",
+            "--print", "--verbose",
+            "--input-format", "stream-json",
+            "--output-format", "stream-json",
+            "--permission-mode", "bypassPermissions",
+        ]
+
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            bufsize=1,
+        )
+
+        init_msg = json.dumps({
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": (
+                    f"No tasks have agent: labels. Worker ID: {WORKER_ID}. "
+                    f"Run the planner (plan agent) to do a big-picture review. "
+                    f"Check milestones, assess gaps, create tasks if needed."
+                )
+            }
+        })
+        proc.stdin.write(init_msg + "\n")
+        proc.stdin.flush()
+        proc.stdin.close()
+
+        done_event = threading.Event()
+        out_thread = threading.Thread(target=output_reader, args=(proc, done_event), daemon=True)
+        out_thread.start()
+
+        done_event.wait(timeout=600)
+
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+        out_thread.join(timeout=5)
+        return True
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
+
+
 def handle_sigint(signum, frame):
     """First ctrl+c: request graceful stop. Second: hard exit."""
     global STOP_REQUESTED
@@ -423,9 +492,7 @@ def run_worker():
     # Claim a task atomically before launching claude
     issue_num, agent_label = claim_task()
     if issue_num is None:
-        if VERBOSE:
-            print(f"{DIM}No tasks available.{RESET}")
-        return False
+        return run_planner()
 
     cmd = [
         "claude", "--agent", "worker",
