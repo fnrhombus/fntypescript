@@ -111,7 +111,6 @@ WORKER_ID = f"{WORKER_NAMES[_worker_num % len(WORKER_NAMES)]}-{_worker_num}"
 C = WorkerColors(0)
 
 VERBOSE = False
-INTERACTIVE = False
 STOP_REQUESTED = False
 QUIET = False  # suppress output from workers that find no work
 
@@ -751,16 +750,10 @@ def spawn_agent(agent_type, prompt):
     proc.stdin.write(init_msg + "\n")
     proc.stdin.flush()
 
-    if INTERACTIVE:
-        done_event = threading.Event()
-        out_thread = threading.Thread(target=output_reader, args=(proc, done_event), daemon=True)
-        out_thread.start()
-        input_sender(proc, done_event)
-    else:
-        proc.stdin.close()
-        done_event = threading.Event()
-        out_thread = threading.Thread(target=output_reader, args=(proc, done_event), daemon=True)
-        out_thread.start()
+    proc.stdin.close()
+    done_event = threading.Event()
+    out_thread = threading.Thread(target=output_reader, args=(proc, done_event), daemon=True)
+    out_thread.start()
 
     done_event.wait(timeout=600)
 
@@ -1093,34 +1086,6 @@ def output_reader(proc, done_event):
     sys.stdout.flush()
 
 
-def input_sender(proc, done_event):
-    import select
-    try:
-        while proc.poll() is None and not done_event.is_set():
-            ready, _, _ = select.select([sys.stdin], [], [], 1.0)
-            if not ready:
-                continue
-            try:
-                line = sys.stdin.readline()
-            except EOFError:
-                break
-            if not line:
-                break
-            line = line.strip()
-            if not line:
-                continue
-            msg = json.dumps({
-                "type": "user",
-                "message": {"role": "user", "content": line}
-            })
-            try:
-                proc.stdin.write(msg + "\n")
-                proc.stdin.flush()
-            except BrokenPipeError:
-                break
-    except KeyboardInterrupt:
-        pass
-
 
 # ── Main loop ───────────────────────────────────────────────────────
 
@@ -1194,7 +1159,7 @@ _scale_queue = None
 
 def run_worker_process(args_ns, color_index, scale_queue=None):
     """Entry point for each worker subprocess. Runs one dispatch cycle and exits."""
-    global VERBOSE, INTERACTIVE, QUIET, WORKER_ID, C, _scale_queue
+    global VERBOSE, QUIET, WORKER_ID, C, _scale_queue
     VERBOSE = args_ns.verbose
     QUIET = args_ns.quiet
     _scale_queue = scale_queue
@@ -1219,7 +1184,7 @@ def run_worker_process(args_ns, color_index, scale_queue=None):
 
 
 def main():
-    global VERBOSE, INTERACTIVE, QUIET
+    global VERBOSE, QUIET
     parser = argparse.ArgumentParser(description="fntypescript worker swarm")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Show full claude output")
@@ -1227,18 +1192,9 @@ def main():
                         help="Suppress idle/no-work output")
     parser.add_argument("-w", "--max-workers", type=int, default=0, metavar="N",
                         help="Maximum concurrent workers (0 = unlimited, default: 0)")
-    parser.add_argument("-i", "--interactive", action="store_true",
-                        help="Run one interactive cycle (no supervisor, stdin forwarded)")
     args = parser.parse_args()
     VERBOSE = args.verbose
     QUIET = args.quiet
-
-    if args.interactive:
-        global INTERACTIVE
-        INTERACTIVE = True
-        signal.signal(signal.SIGINT, handle_sigint)
-        run_cycle()
-        return
 
     # ── Supervisor mode ────────────────────────────────────────────
     global WORKER_ID, C
