@@ -8,7 +8,18 @@
     "rootDir": "src",
     "skipLibCheck": true,
     "experimentalDecorators": true,
-    "plugins": [{ "name": "fntypescript" }]
+    "noEmit": true,
+    "plugins": [{
+      "name": "fntypescript",
+      "plugins": [
+        "@fntypescript/plugin-function-decorators",
+        "@fntypescript/plugin-sql-diagnostics",
+        "@fntypescript/plugin-styled-completions",
+        "@fntypescript/plugin-enhanced-hover",
+        "@fntypescript/plugin-custom-definitions",
+        "@fntypescript/plugin-graphql-diagnostics"
+      ]
+    }]
   },
   "include": ["src"]
 }

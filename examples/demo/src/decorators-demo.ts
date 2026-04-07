@@ -1,13 +1,16 @@
 // DECORATOR DEMO
 //
-// NOTE: The @decorator syntax on standalone functions causes TS1206 errors
-// at compile time. The Language Service plugin suppresses these in your editor,
-// but tsc sees them during build. Each @decorator line below has a
-// // @ts-expect-error comment to keep the build clean.
+// This file demonstrates the two-runtime value of fntypescript.
 //
-// With the function-decorators plugin active:
-//   - No TS1206 red squiggle on the @log decorator below
-//   - Hover over @log to see normal decorator hover info
+// `@decorator` on standalone functions is a TypeScript error (TS1206) — the
+// compiler rejects it. The function-decorators plugin suppresses TS1206 in
+// both runtimes:
+//
+//   IDE:    compilerOptions.plugins loads the plugin into tsserver → no red squigglies
+//   CI/CLI: `fntypescript check` runs the same plugin → `typecheck` passes
+//
+// PLUGIN EFFECT: Run `pnpm run typecheck:vanilla` (plain tsc) to see TS1206.
+//               Run `pnpm run typecheck` (fntypescript) to see 0 errors.
 
 function log(target: Function) {
   return function (this: unknown, ...args: unknown[]) {
@@ -27,20 +30,20 @@ function memoize(target: Function) {
   };
 }
 
-// @ts-expect-error TS1206: decorators on standalone functions — suppressed by plugin in editor
+// PLUGIN EFFECT: TS1206 suppressed by plugin-function-decorators in both runtimes
 @log
 function greet(name: string): string {
   return `Hello, ${name}!`;
 }
 
-// @ts-expect-error TS1206: decorators on standalone functions — suppressed by plugin in editor
+// PLUGIN EFFECT: TS1206 suppressed by plugin-function-decorators in both runtimes
 @memoize
 function fibonacci(n: number): number {
   if (n <= 1) return n;
   return fibonacci(n - 1) + fibonacci(n - 2);
 }
 
-// @ts-expect-error TS1206: decorators on standalone functions — suppressed by plugin in editor
+// PLUGIN EFFECT: TS1206 suppressed by plugin-function-decorators in both runtimes
 @log
 @memoize
 function expensiveCalculation(x: number, y: number): number {
