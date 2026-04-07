@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  build-and-test:
+  build-and-test-matrix:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -23,3 +23,13 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
       - run: pnpm run test
+
+  build-and-test:
+    needs: build-and-test-matrix
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - run: |
+          if [ "${{ needs.build-and-test-matrix.result }}" != "success" ]; then
+            exit 1
+          fi

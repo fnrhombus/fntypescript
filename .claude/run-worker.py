@@ -2,12 +2,15 @@
 """Worker loop: dispatches fn10x, fnnitpick, and triage agents based on priority.
 
 Priority order each cycle:
+  0. Merge approved PRs (auto-merge)
   1. PRs needing review (fnnitpick)
   2. Rejected PRs needing fixes (fn10x)
-  3. Tasks with agent:fn10x label (fn10x, new work)
+  3. Tasks in 'Ready for Dev' board column (fn10x, new work)
   4. Nothing available → triage (create tasks or confirm done)
 
-Task claiming uses labels + issue comments (distributed lock).
+Routing uses project board columns (Ready for Dev, Ready for QA, etc.).
+Claiming uses CLAIM/RELEASE/HEARTBEAT issue comments (distributed lock).
+Board 'Claimed By' field provides visibility of who holds each item.
 File lock prevents local races; comment protocol prevents cross-machine races.
 """
 
@@ -23,6 +26,7 @@ import random
 import re
 import argparse
 import colorsys
+from datetime import datetime, timezone
 
 # Human-readable worker names (top 100 US names, SSA + Census data)
 WORKER_NAMES = [
@@ -104,7 +108,6 @@ TRIAGE_LOCK_FILE = "/tmp/fntypescript-triage.lock"
 TRIAGE_COOLDOWN_FILE = "/tmp/fntypescript-triage-cooldown"
 TRIAGE_COOLDOWN = 900  # 15 minutes between triage runs that find no work
 REPO = "fnrhombus/fntypescript"
-IDLE_SLEEP = 180
 
 _worker_num = random.randint(10000, 99999)
 WORKER_ID = f"{WORKER_NAMES[_worker_num % len(WORKER_NAMES)]}-{_worker_num}"
@@ -113,10 +116,6 @@ C = WorkerColors(0)
 VERBOSE = False
 STOP_REQUESTED = False
 QUIET = False  # suppress output from workers that find no work
-
-QA_TOKEN_CMD = ["python3",
-                os.path.expanduser("~/.config/fnteam/gh-bot-token.py"), "qa"]
-
 
 def ts():
     return time.strftime("%H:%M:%S")
@@ -139,37 +138,181 @@ def gh_comment(issue_num, body):
     )
 
 
-def get_qa_token():
-    result = subprocess.run(QA_TOKEN_CMD, capture_output=True, text=True, timeout=30)
-    return result.stdout.strip() if result.returncode == 0 else None
+# ── Board management ───────────────────────────────────────────────
 
+PROJECT_ID = "PVT_kwHOACZSnM4BTvD0"
+STATUS_FIELD_ID = "PVTSSF_lAHOACZSnM4BTvD0zhA7-Rg"
+CLAIMED_BY_FIELD_ID = "PVTF_lAHOACZSnM4BTvD0zhBFwmQ"
 
-def update_board_status(issue_num, status):
-    """Update project board status. status: backlog|up_next|in_progress|done"""
-    option_ids = {
-        "backlog": "1c08a291", "up_next": "941b3c39",
-        "in_progress": "620f5d53", "done": "33c61586",
+BOARD_STATUS = {
+    "backlog": "a233181e", "ready_for_dev": "22da6746",
+    "dev_in_progress": "790d1811", "ready_for_qa": "53d6c465",
+    "qa_in_progress": "c387ab6b", "awaiting_merge": "a2e44fab",
+    "done": "d964e466",
+}
+
+BOARD_QUERY = '''{
+  node(id: "%s") {
+    ... on ProjectV2 {
+      items(first: 100) {
+        nodes {
+          id
+          status: fieldValueByName(name: "Status") {
+            ... on ProjectV2ItemFieldSingleSelectValue { optionId }
+          }
+          claimedBy: fieldValueByName(name: "Claimed By") {
+            ... on ProjectV2ItemFieldTextValue { text }
+          }
+          content {
+            ... on Issue { number title state }
+          }
+        }
+      }
     }
-    option_id = option_ids.get(status)
-    if not option_id:
-        return
+  }
+}''' % PROJECT_ID
+
+
+def query_board_items(status):
+    """Get open issues in a board column. Returns [{number, title, item_id, claimed_by}]."""
+    target_id = BOARD_STATUS.get(status)
+    if not target_id:
+        return []
     result = subprocess.run(
-        ["gh", "project", "item-list", "4", "--owner", "fnrhombus",
-         "--format", "json", "--jq",
-         f'.items[] | select(.content.number == {issue_num}) | .id'],
+        ["gh", "api", "graphql", "-f", f"query={BOARD_QUERY}"],
         capture_output=True, text=True, timeout=30
     )
-    item_id = result.stdout.strip()
+    if result.returncode != 0:
+        return []
+    data = json.loads(result.stdout)
+    items = data.get("data", {}).get("node", {}).get("items", {}).get("nodes", [])
+    matches = []
+    for item in items:
+        content = item.get("content")
+        if not content or content.get("state") != "OPEN":
+            continue
+        status_val = item.get("status")
+        if not status_val or status_val.get("optionId") != target_id:
+            continue
+        claimed = item.get("claimedBy")
+        matches.append({
+            "number": content["number"],
+            "title": content.get("title", ""),
+            "item_id": item["id"],
+            "claimed_by": claimed.get("text", "") if claimed else "",
+        })
+    return matches
+
+
+_item_id_cache = {}
+_item_id_cache_time = 0
+
+
+def get_project_item_id(issue_num):
+    """Get the project board item ID for an issue number. Cached for 60s."""
+    global _item_id_cache, _item_id_cache_time
+    now = time.time()
+    if issue_num in _item_id_cache and now - _item_id_cache_time < 60:
+        return _item_id_cache[issue_num]
+    result = subprocess.run(
+        ["gh", "project", "item-list", "4", "--owner", "fnrhombus",
+         "--format", "json"],
+        capture_output=True, text=True, timeout=30
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    _item_id_cache = {}
+    _item_id_cache_time = now
+    for item in data.get("items", []):
+        num = item.get("content", {}).get("number")
+        if num:
+            _item_id_cache[num] = item["id"]
+    return _item_id_cache.get(issue_num)
+
+
+def update_board_status(issue_num, status, item_id=None):
+    """Move an issue to a board column."""
+    option_id = BOARD_STATUS.get(status)
+    if not option_id:
+        return
+    if not item_id:
+        item_id = get_project_item_id(issue_num)
     if not item_id:
         return
     subprocess.run(
         ["gh", "project", "item-edit",
-         "--project-id", "PVT_kwHOACZSnM4BTvD0",
+         "--project-id", PROJECT_ID,
          "--id", item_id,
-         "--field-id", "PVTSSF_lAHOACZSnM4BTvD0zhA7-Rg",
+         "--field-id", STATUS_FIELD_ID,
          "--single-select-option-id", option_id],
         capture_output=True, text=True, timeout=30
     )
+
+
+def set_claimed_by(issue_num, worker_id, item_id=None):
+    """Set the 'Claimed By' field on a board item."""
+    if not item_id:
+        item_id = get_project_item_id(issue_num)
+    if not item_id:
+        return
+    subprocess.run(
+        ["gh", "project", "item-edit",
+         "--project-id", PROJECT_ID,
+         "--id", item_id,
+         "--field-id", CLAIMED_BY_FIELD_ID,
+         "--text", worker_id],
+        capture_output=True, text=True, timeout=30
+    )
+
+
+def clear_claimed_by(issue_num, item_id=None):
+    """Clear the 'Claimed By' field on a board item."""
+    if not item_id:
+        item_id = get_project_item_id(issue_num)
+    if not item_id:
+        return
+    subprocess.run(
+        ["gh", "api", "graphql", "-f", f'query=mutation {{ clearProjectV2ItemFieldValue(input: {{projectId: "{PROJECT_ID}", itemId: "{item_id}", fieldId: "{CLAIMED_BY_FIELD_ID}"}}) {{ projectV2Item {{ id }} }} }}'],
+        capture_output=True, text=True, timeout=30
+    )
+
+
+def ensure_on_board(issue_num, status=None):
+    """Ensure an issue is on the board, adding it if needed. Returns item_id."""
+    item_id = get_project_item_id(issue_num)
+    if not item_id:
+        result = subprocess.run(
+            ["gh", "project", "item-add", "4", "--owner", "fnrhombus",
+             "--url", f"https://github.com/{REPO}/issues/{issue_num}",
+             "--format", "json"],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode == 0:
+            try:
+                item_id = json.loads(result.stdout).get("id")
+            except json.JSONDecodeError:
+                pass
+    if item_id and status:
+        update_board_status(issue_num, status, item_id=item_id)
+    return item_id
+
+
+def get_linked_issue(pr_num):
+    """Get the first issue number referenced in a PR body."""
+    result = subprocess.run(
+        ["gh", "pr", "view", str(pr_num), "--repo", REPO,
+         "--json", "body", "--jq", ".body"],
+        capture_output=True, text=True, timeout=30
+    )
+    if result.returncode == 0:
+        refs = re.findall(r"#(\d+)", result.stdout)
+        if refs:
+            return int(refs[0])
+    return None
 
 
 # ── Codebase context cache ─────────────────────────────────────────
@@ -265,6 +408,9 @@ def merge_pr(pr):
     )
     if result.returncode == 0:
         log(f"PR #{pr_num} auto-merge enabled", C.success)
+        issue_num = get_linked_issue(pr_num)
+        if issue_num:
+            update_board_status(issue_num, "awaiting_merge")
     else:
         log(f"Failed to merge PR #{pr_num}: {result.stderr.strip()}", C.error)
     return True
@@ -309,7 +455,13 @@ def find_pr_needing_review():
             log(f"Lost claim on PR #{pr_num}", C.warning, quiet_ok=True)
             continue
 
-        return {"number": pr_num, "title": pr["title"]}
+        # Move linked issue to QA In Progress
+        issue_num = get_linked_issue(pr_num)
+        if issue_num:
+            update_board_status(issue_num, "qa_in_progress")
+            set_claimed_by(issue_num, WORKER_ID)
+
+        return {"number": pr_num, "title": pr["title"], "linked_issue": issue_num}
 
     return None
 
@@ -317,6 +469,7 @@ def find_pr_needing_review():
 def run_pr_review(pr):
     """Spawn fnnitpick to review a PR."""
     pr_num = pr["number"]
+    issue_num = pr.get("linked_issue") or get_linked_issue(pr_num)
     log(f"Reviewing PR #{pr_num}: {pr['title']}", C.success)
 
     # Get the linked issue number from the PR body
@@ -338,6 +491,8 @@ def run_pr_review(pr):
 
     prompt = (
         f"Review PR #{pr_num} in repo {REPO}.\n\n"
+        f"FIRST: Read all comments on the PR and linked issue(s) to understand "
+        f"the full history — previous reviews, fixes, and context.\n\n"
         f"Read the PR diff with: gh pr diff {pr_num} --repo {REPO}\n\n"
     )
     if issue_context:
@@ -347,9 +502,25 @@ def run_pr_review(pr):
         "request changes if it doesn't. Use the QA bot token for authentication."
     )
 
-    result = spawn_agent("qa", prompt)
-    gh_comment(pr_num, f"RELEASE {WORKER_ID} — review complete")
-    return result
+    spawn_agent("qa", prompt)
+
+    # Check review outcome and update board
+    review_result = subprocess.run(
+        ["gh", "pr", "view", str(pr_num), "--repo", REPO,
+         "--json", "reviewDecision", "--jq", ".reviewDecision"],
+        capture_output=True, text=True, timeout=30
+    )
+    decision = review_result.stdout.strip() if review_result.returncode == 0 else ""
+
+    if issue_num:
+        if decision == "APPROVED":
+            update_board_status(issue_num, "awaiting_merge")
+        elif decision == "CHANGES_REQUESTED":
+            update_board_status(issue_num, "ready_for_dev")
+        clear_claimed_by(issue_num)
+
+    gh_comment(pr_num, f"RELEASE {WORKER_ID} — review complete ({decision})")
+    return True
 
 
 # ── Priority 2: Rejected PRs ───────────────────────────────────────
@@ -411,11 +582,18 @@ def find_rejected_pr():
             log(f"Lost claim on PR #{pr_num} fix", C.warning, quiet_ok=True)
             continue
 
+        # Move linked issue to Dev In Progress (claiming)
+        issue_num = get_linked_issue(pr_num)
+        if issue_num:
+            update_board_status(issue_num, "dev_in_progress")
+            set_claimed_by(issue_num, WORKER_ID)
+
         return {
             "number": pr_num,
             "title": pr["title"],
             "branch": pr.get("headRefName", ""),
             "review_body": review_body,
+            "linked_issue": issue_num,
         }
 
     return None
@@ -471,6 +649,8 @@ def run_pr_fix(pr):
 
     prompt = (
         f"PR #{pr_num} was rejected by the QA reviewer. Fix the issues and push to the same branch.\n\n"
+        f"FIRST: Read all comments on the PR and linked issue(s) to understand "
+        f"the full history — previous reviews, fixes, and what other workers have already done.\n\n"
         f"{worktree_info}\n\n"
         f"QA review feedback:\n{pr['review_body']}\n\n"
     )
@@ -488,16 +668,28 @@ def run_pr_fix(pr):
         f"Push after each meaningful chunk — but ONLY after build+test pass."
     )
 
-    # Find linked issue for heartbeat (PR fixes are tied to an issue)
-    hb_issue = int(issue_refs[0]) if issue_refs else None
+    issue_num = pr.get("linked_issue") or (int(issue_refs[0]) if issue_refs else None)
     hb_stop = threading.Event()
-    if hb_issue:
-        hb_thread = threading.Thread(target=heartbeat_loop, args=(hb_issue, hb_stop), daemon=True)
+    if issue_num:
+        hb_thread = threading.Thread(target=heartbeat_loop, args=(issue_num, hb_stop), daemon=True)
         hb_thread.start()
     try:
-        result = spawn_agent("code", prompt)
-        gh_comment(pr_num, f"RELEASE {WORKER_ID} — PR fix complete")
-        return result
+        spawn_agent("code", prompt)
+        if STOP_REQUESTED and issue_num:
+            pushed = subprocess.run(
+                ["git", "-C", worktree_path, "log", "--oneline", f"origin/main..{branch}"],
+                capture_output=True, text=True, timeout=10
+            ) if worktree_path else None
+            summary = pushed.stdout.strip() if pushed and pushed.returncode == 0 else "(no commits pushed)"
+            gh_comment(pr_num, f"RELEASE {WORKER_ID} — graceful stop, work so far:\n{summary}")
+            update_board_status(issue_num, "ready_for_dev")
+        else:
+            gh_comment(pr_num, f"RELEASE {WORKER_ID} — PR fix complete")
+            if issue_num:
+                update_board_status(issue_num, "ready_for_qa")
+        if issue_num:
+            clear_claimed_by(issue_num)
+        return True
     finally:
         hb_stop.set()
 
@@ -509,33 +701,36 @@ ALL_BUSY = "ALL_BUSY"
 
 
 def find_ready_task():
-    """Find and claim a task with agent:fn10x label.
+    """Find and claim a task from the 'Ready for Dev' board column.
     Returns task dict, None (no tasks exist), or ALL_BUSY (tasks exist but unavailable)."""
     lock_fd = open(LOCK_FILE, "w")
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
 
-        result = subprocess.run(
-            ["gh", "issue", "list", "--repo", REPO, "--state", "open",
-             "--label", "agent:fn10x",
-             "--json", "number,title,labels", "--jq",
-             '.[] | {number, title, '
-             'priority: (.labels | map(.name) | map(select(startswith("P"))) | .[0] // "P9")}'],
-            capture_output=True, text=True, timeout=30
-        )
-
-        if result.returncode != 0 or not result.stdout.strip():
+        items = query_board_items("ready_for_dev")
+        if not items:
             return None
 
+        # Filter to unclaimed items and fetch priorities
         tasks = []
-        for line in result.stdout.strip().split("\n"):
-            try:
-                tasks.append(json.loads(line))
-            except json.JSONDecodeError:
+        for item in items:
+            if item.get("claimed_by"):
                 continue
+            num = item["number"]
+            result = subprocess.run(
+                ["gh", "issue", "view", str(num), "--repo", REPO,
+                 "--json", "labels", "--jq",
+                 '.labels | map(.name) | map(select(startswith("P"))) | .[0] // "P9"'],
+                capture_output=True, text=True, timeout=30
+            )
+            priority = result.stdout.strip() if result.returncode == 0 else "P9"
+            tasks.append({
+                "number": num, "title": item["title"],
+                "priority": priority, "item_id": item["item_id"],
+            })
 
         if not tasks:
-            return None
+            return ALL_BUSY
 
         tasks.sort(key=lambda t: t.get("priority", "P9"))
 
@@ -555,26 +750,14 @@ def find_ready_task():
                 log(f"Lost claim on #{issue_num}", C.warning, quiet_ok=True)
                 continue
 
-            label_check = subprocess.run(
-                ["gh", "issue", "view", str(issue_num), "--repo", REPO,
-                 "--json", "labels", "--jq",
-                 '.labels | map(.name) | any(. == "agent:fn10x")'],
-                capture_output=True, text=True, timeout=30
-            )
-            if label_check.stdout.strip() != "true":
-                log(f"#{issue_num} label already removed, skipping...", C.warning)
-                continue
-
-            subprocess.run(
-                ["gh", "issue", "edit", str(issue_num), "--remove-label", "agent:fn10x",
-                 "--repo", REPO],
-                capture_output=True, text=True, timeout=30
-            )
+            # Won — move to Dev In Progress and set Claimed By
+            item_id = chosen.get("item_id")
+            update_board_status(issue_num, "dev_in_progress", item_id=item_id)
+            set_claimed_by(issue_num, WORKER_ID, item_id=item_id)
 
             log(f"Claimed #{issue_num}: {chosen.get('title', '?')}", C.success)
             return chosen
 
-        # Tasks existed but all were blocked or claimed by others
         return ALL_BUSY
 
     except Exception as e:
@@ -588,8 +771,6 @@ def find_ready_task():
 def run_new_task(task):
     """Spawn fn10x for a new task."""
     issue_num = task["number"]
-
-    update_board_status(issue_num, "in_progress")
 
     # Create or reuse worktree — check for any existing worktree for this issue
     worktree_info = ""
@@ -625,6 +806,9 @@ def run_new_task(task):
 
     prompt = (
         f"Implement issue #{issue_num} in repo {REPO}.\n\n"
+        f"FIRST: Read all comments on the issue to understand the full history — "
+        f"previous attempts, reviewer feedback, and what other workers have already done. "
+        f"Run: gh issue view {issue_num} --repo {REPO} --json comments\n\n"
         f"{worktree_info}\n\n"
         f"## Spec\n\n{spec}\n\n"
         f"## Codebase context (cached — do NOT re-explore these files)\n\n{codebase}\n\n"
@@ -650,15 +834,20 @@ def run_new_task(task):
 
     # Release the task
     if STOP_REQUESTED:
-        subprocess.run(
-            ["gh", "issue", "edit", str(issue_num), "--add-label", "agent:fn10x",
-             "--repo", REPO],
-            capture_output=True, text=True, timeout=30
-        )
-        gh_comment(issue_num, f"RELEASE {WORKER_ID} — graceful stop requested, re-added agent:fn10x")
-        log(f"#{issue_num} released back to pool", C.warning)
+        # Summarize pushed work for the next worker
+        pushed = subprocess.run(
+            ["git", "-C", worktree_path, "log", "--oneline", f"origin/main..{worktree_branch}"],
+            capture_output=True, text=True, timeout=10
+        ) if worktree_path else None
+        summary = pushed.stdout.strip() if pushed and pushed.returncode == 0 else "(no commits pushed)"
+        gh_comment(issue_num, f"RELEASE {WORKER_ID} — graceful stop, work so far:\n{summary}")
+        update_board_status(issue_num, "ready_for_dev")
+        clear_claimed_by(issue_num)
+        log(f"#{issue_num} released back to Ready for Dev", C.warning)
     else:
         gh_comment(issue_num, f"RELEASE {WORKER_ID} — work complete")
+        update_board_status(issue_num, "ready_for_qa")
+        clear_claimed_by(issue_num)
 
     return result
 
@@ -687,32 +876,42 @@ def run_triage():
         log("No work available — running triage...", C.triage)
 
         # Snapshot task list before triage so we can detect genuinely new work
-        before = subprocess.run(
-            ["gh", "issue", "list", "--repo", REPO, "--state", "open",
-             "--label", "agent:fn10x",
-             "--json", "number", "--jq", "[.[].number]"],
-            capture_output=True, text=True, timeout=30
-        )
-        before_ids = set(json.loads(before.stdout.strip() or "[]")) if before.returncode == 0 else set()
+        before_items = query_board_items("ready_for_dev")
+        before_ids = {item["number"] for item in before_items}
 
         prompt = (
-            "No tasks have agent: labels and no PRs need review. "
-            f"Worker ID: {WORKER_ID}. "
+            "The 'Ready for Dev' board column is empty and no PRs need review or fixing. "
+            f"Worker ID: {WORKER_ID}. Repo: {REPO}.\n\n"
             "Do a big-picture review: check milestones, assess gaps, create tasks if needed. "
+            "For any new issues you create, add them to project #4 (owner: fnrhombus) "
+            "and set their Status to 'Ready for Dev' so workers can pick them up. "
             "If the project is genuinely done, say so."
         )
 
         spawn_agent("triage", prompt)
 
-        # Check if triage created new work (compare before/after)
+        # Check if triage created new work — look for new open issues not on the board
         after = subprocess.run(
             ["gh", "issue", "list", "--repo", REPO, "--state", "open",
-             "--label", "agent:fn10x",
              "--json", "number", "--jq", "[.[].number]"],
             capture_output=True, text=True, timeout=30
         )
-        after_ids = set(json.loads(after.stdout.strip() or "[]")) if after.returncode == 0 else set()
+        all_open = set(json.loads(after.stdout.strip() or "[]")) if after.returncode == 0 else set()
+        # Also check board for newly added Ready for Dev items
+        after_items = query_board_items("ready_for_dev")
+        after_ids = {item["number"] for item in after_items}
         new_ids = after_ids - before_ids
+        # Ensure any new issues with agent labels get on the board
+        for issue_num in all_open - after_ids - before_ids:
+            label_check = subprocess.run(
+                ["gh", "issue", "view", str(issue_num), "--repo", REPO,
+                 "--json", "labels", "--jq",
+                 '.labels | map(.name) | any(startswith("agent:"))'],
+                capture_output=True, text=True, timeout=30
+            )
+            if label_check.stdout.strip() == "true":
+                ensure_on_board(issue_num, "ready_for_dev")
+                new_ids.add(issue_num)
 
         if new_ids:
             id_list = ", ".join(f"#{n}" for n in sorted(new_ids))
@@ -830,25 +1029,21 @@ def release_stale_claims(issue_num):
         if worker == WORKER_ID:
             continue
         try:
-            from datetime import datetime, timezone
             last_seen = datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
             age = now - last_seen
             if age > CLAIM_STALE_THRESHOLD:
                 log(f"Releasing stale claim from {worker} on #{issue_num} ({int(age)}s old)", C.warning)
                 gh_comment(issue_num, f"RELEASE {worker} — stale claim auto-released by {WORKER_ID}")
-                # Re-add agent label if this is an issue (not a PR)
+                # Bounce issue back to Ready for Dev and clear Claimed By
                 is_pr = subprocess.run(
                     ["gh", "pr", "view", str(issue_num), "--repo", REPO,
                      "--json", "number", "--jq", ".number"],
                     capture_output=True, text=True, timeout=30
                 )
                 if is_pr.returncode != 0:
-                    # Not a PR — it's an issue, re-add label
-                    subprocess.run(
-                        ["gh", "issue", "edit", str(issue_num), "--add-label", "agent:fn10x",
-                         "--repo", REPO],
-                        capture_output=True, text=True, timeout=30
-                    )
+                    # It's an issue — move back to Ready for Dev
+                    update_board_status(issue_num, "ready_for_dev")
+                    clear_claimed_by(issue_num)
         except (ValueError, OSError):
             pass
 
@@ -908,35 +1103,18 @@ def is_blocked(issue_num):
 # ── Orphan cleanup ─────────────────────────────────────────────────
 
 def cleanup_orphaned_claims():
-    """Find open issues with no agent label and no open PR, then release stale claims."""
-    result = subprocess.run(
-        ["gh", "issue", "list", "--repo", REPO, "--state", "open",
-         "--json", "number,labels", "--jq",
-         '.[] | select(.labels | map(.name) | any(startswith("agent:")) | not) | .number'],
-        capture_output=True, text=True, timeout=30
-    )
-    if result.returncode != 0 or not result.stdout.strip():
-        return
-
-    # Get open PR branches to check if issues already have PRs in flight
-    pr_result = subprocess.run(
-        ["gh", "pr", "list", "--repo", REPO, "--state", "open",
-         "--json", "body", "--jq", ".[].body"],
-        capture_output=True, text=True, timeout=30
-    )
-    pr_bodies = pr_result.stdout if pr_result.returncode == 0 else ""
-
-    for line in result.stdout.strip().split("\n"):
-        try:
-            issue_num = int(line.strip())
-        except ValueError:
-            continue
-        # Skip if an open PR references this issue
-        if f"#{issue_num}" in pr_bodies:
-            if VERBOSE:
-                log(f"#{issue_num} has an open PR, skipping orphan check", C.dim, quiet_ok=True)
-            continue
-        release_stale_claims(issue_num)
+    """Find items in 'In Progress' columns with stale claims and bounce them back."""
+    for status in ("dev_in_progress", "qa_in_progress"):
+        items = query_board_items(status)
+        for item in items:
+            if not item.get("claimed_by"):
+                # In progress but no claim — orphaned, bounce back
+                ready = "ready_for_dev" if status == "dev_in_progress" else "ready_for_qa"
+                log(f"#{item['number']} orphaned in {status} (no claim), moving to {ready}", C.warning)
+                update_board_status(item["number"], ready, item_id=item["item_id"])
+                continue
+            # Has a claim — check if it's stale
+            release_stale_claims(item["number"])
 
 
 # ── Worktree helpers ───────────────────────────────────────────────

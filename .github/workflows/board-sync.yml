@@ -1,0 +1,55 @@
+name: Board Sync
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  sync-board:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event.review.state == 'approved' ||
+      github.event.review.state == 'changes_requested'
+    steps:
+      - name: Update linked issue on project board
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+        run: |
+          PR_NUM=${{ github.event.pull_request.number }}
+          REVIEW_STATE="${{ github.event.review.state }}"
+
+          # Extract first linked issue number from PR body
+          ISSUE_NUM=$(gh pr view "$PR_NUM" --repo "${{ github.repository }}" \
+            --json body --jq '.body' | grep -oP '#\K\d+' | head -1)
+
+          if [ -z "$ISSUE_NUM" ]; then
+            echo "No linked issue found in PR #$PR_NUM"
+            exit 0
+          fi
+
+          # Map review state to board column
+          if [ "$REVIEW_STATE" = "approved" ]; then
+            OPTION_ID="a2e44fab"  # Awaiting Merge
+            echo "PR #$PR_NUM approved -> issue #$ISSUE_NUM to Awaiting Merge"
+          else
+            OPTION_ID="22da6746"  # Ready for Dev
+            echo "PR #$PR_NUM changes requested -> issue #$ISSUE_NUM to Ready for Dev"
+          fi
+
+          # Find project item ID for the issue
+          ITEM_ID=$(gh project item-list 4 --owner fnrhombus \
+            --format json | jq -r ".items[] | select(.content.number == $ISSUE_NUM) | .id")
+
+          if [ -z "$ITEM_ID" ] || [ "$ITEM_ID" = "null" ]; then
+            echo "Issue #$ISSUE_NUM not found on project board"
+            exit 0
+          fi
+
+          # Update board status
+          gh project item-edit \
+            --project-id "PVT_kwHOACZSnM4BTvD0" \
+            --id "$ITEM_ID" \
+            --field-id "PVTSSF_lAHOACZSnM4BTvD0zhA7-Rg" \
+            --single-select-option-id "$OPTION_ID"
+
+          echo "Done"
