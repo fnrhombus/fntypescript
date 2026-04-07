@@ -4,6 +4,9 @@
   "description": "TypeScript Language Service plugin framework",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "fntypescript": "dist/cli.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -27,6 +30,11 @@
     },
     "./types.js": {
       "types": "./dist/types.d.ts"
+    },
+    "./check.js": {
+      "types": "./dist/check.d.ts",
+      "import": "./dist/check.js",
+      "require": "./dist/check.js"
     }
   },
   "engines": {

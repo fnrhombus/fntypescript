@@ -5,7 +5,8 @@ export interface HookContext {
   fileName: string;
   languageService: ts.LanguageService;
   typescript: typeof ts;
-  project: ts.server.Project;
+  /** The server project — present in IDE context, undefined in CLI/build context */
+  project?: ts.server.Project;
   config: Record<string, unknown>;
   logger: {
     info(message: string): void;
