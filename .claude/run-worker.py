@@ -339,8 +339,13 @@ def run_pr_fix(pr):
 
 # ── Priority 3: Ready tasks ────────────────────────────────────────
 
+# Sentinel: tasks exist but all are claimed/blocked — don't run triage
+ALL_BUSY = "ALL_BUSY"
+
+
 def find_ready_task():
-    """Find and claim a task with agent:fn10x label. Returns task dict or None."""
+    """Find and claim a task with agent:fn10x label.
+    Returns task dict, None (no tasks exist), or ALL_BUSY (tasks exist but unavailable)."""
     lock_fd = open(LOCK_FILE, "w")
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
@@ -404,7 +409,8 @@ def find_ready_task():
             log(f"Claimed #{issue_num}: {chosen.get('title', '?')}", C.success)
             return chosen
 
-        return None
+        # Tasks existed but all were blocked or claimed by others
+        return ALL_BUSY
 
     except Exception as e:
         log(f"Error claiming task: {e}", C.error)
@@ -931,12 +937,15 @@ def run_cycle():
 
     # Priority 3: Ready tasks
     task = find_ready_task()
+    if task is ALL_BUSY:
+        log("All tasks claimed or blocked. Nothing for this worker to do.", C.info)
+        return False
     if task:
         _signal_scale_up()
         run_new_task(task)
         return True
 
-    # Priority 4: Triage
+    # Priority 4: Triage (only when no tasks exist at all)
     return run_triage()
 
 
