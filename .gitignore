@@ -6,3 +6,4 @@ dist/
 coverage/
 .turbo/
 .claude/worktrees/
+__pycache__/
