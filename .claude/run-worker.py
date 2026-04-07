@@ -223,10 +223,63 @@ def get_codebase_context():
     return context
 
 
+# ── Priority 0: Merge approved PRs ─────────────────────────────────
+
+def find_mergeable_pr():
+    """Find an open PR where CI passed and fnnitpick approved."""
+    result = subprocess.run(
+        ["gh", "pr", "list", "--repo", REPO, "--state", "open",
+         "--json", "number,title,reviews,statusCheckRollup"],
+        capture_output=True, text=True, timeout=30
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+
+    prs = json.loads(result.stdout)
+    for pr in prs:
+        reviews = pr.get("reviews", [])
+        qa_reviews = [r for r in reviews
+                      if r.get("author", {}).get("login") == "fnnitpick"]
+        if not qa_reviews:
+            continue
+        latest = qa_reviews[-1]
+        if latest.get("state") != "APPROVED":
+            continue
+
+        # Check CI passed
+        checks = pr.get("statusCheckRollup", [])
+        ci_passed = any(
+            c.get("name", "").startswith("build-and-test") and c.get("conclusion") == "SUCCESS"
+            for c in checks
+        )
+        if not ci_passed:
+            continue
+
+        return {"number": pr["number"], "title": pr["title"]}
+
+    return None
+
+
+def merge_pr(pr):
+    """Merge an approved PR."""
+    pr_num = pr["number"]
+    log(f"Merging PR #{pr_num}: {pr['title']}", C.success)
+    result = subprocess.run(
+        ["gh", "pr", "merge", str(pr_num), "--repo", REPO,
+         "--squash", "--delete-branch"],
+        capture_output=True, text=True, timeout=60
+    )
+    if result.returncode == 0:
+        log(f"PR #{pr_num} merged successfully", C.success)
+    else:
+        log(f"Failed to merge PR #{pr_num}: {result.stderr.strip()}", C.error)
+    return True
+
+
 # ── Priority 1: PRs needing review ─────────────────────────────────
 
 def find_pr_needing_review():
-    """Find an open PR where CI passed and fnnitpick hasn't reviewed."""
+    """Find and claim an open PR where CI passed and fnnitpick hasn't reviewed."""
     result = subprocess.run(
         ["gh", "pr", "list", "--repo", REPO, "--state", "open",
          "--json", "number,title,reviews,statusCheckRollup"],
@@ -241,8 +294,6 @@ def find_pr_needing_review():
         # Skip if fnnitpick already reviewed (any state)
         qa_reviewed = any(r.get("author", {}).get("login") == "fnnitpick" for r in reviews)
         if qa_reviewed:
-            # Check if there are new commits since the last review (stale dismissal)
-            # For now, skip — dismiss_stale_reviews handles re-review
             continue
 
         # Check CI passed
@@ -254,7 +305,15 @@ def find_pr_needing_review():
         if not ci_passed:
             continue
 
-        return {"number": pr["number"], "title": pr["title"]}
+        # Claim the PR review (same protocol as tasks)
+        pr_num = pr["number"]
+        gh_comment(pr_num, f"CLAIM {WORKER_ID}")
+        time.sleep(3)
+        if not check_claim_won(pr_num):
+            log(f"Lost claim on PR #{pr_num}", C.warning, quiet_ok=True)
+            continue
+
+        return {"number": pr_num, "title": pr["title"]}
 
     return None
 
@@ -292,16 +351,18 @@ def run_pr_review(pr):
         "request changes if it doesn't. Use the QA bot token for authentication."
     )
 
-    return spawn_agent("qa", prompt)
+    result = spawn_agent("qa", prompt)
+    gh_comment(pr_num, f"RELEASE {WORKER_ID} — review complete")
+    return result
 
 
 # ── Priority 2: Rejected PRs ───────────────────────────────────────
 
 def find_rejected_pr():
-    """Find an open PR where fnnitpick requested changes."""
+    """Find and claim an open PR where fnnitpick requested changes or CI failed."""
     result = subprocess.run(
         ["gh", "pr", "list", "--repo", REPO, "--state", "open",
-         "--json", "number,title,reviews,headRefName"],
+         "--json", "number,title,reviews,headRefName,statusCheckRollup"],
         capture_output=True, text=True, timeout=30
     )
     if result.returncode != 0 or not result.stdout.strip():
@@ -310,19 +371,46 @@ def find_rejected_pr():
     prs = json.loads(result.stdout)
     for pr in prs:
         reviews = pr.get("reviews", [])
-        # Find PRs where the most recent review from fnnitpick/qa bot requested changes
         qa_reviews = [r for r in reviews
                       if r.get("author", {}).get("login") in ("fnnitpick",)]
-        if not qa_reviews:
+
+        review_body = ""
+        needs_fix = False
+
+        # Check 1: fnnitpick requested changes
+        if qa_reviews:
+            latest = qa_reviews[-1]
+            if latest.get("state") == "CHANGES_REQUESTED":
+                needs_fix = True
+                review_body = latest.get("body", "")
+
+        # Check 2: CI failed (regardless of review state)
+        if not needs_fix:
+            checks = pr.get("statusCheckRollup", [])
+            ci_failed = any(
+                c.get("name", "").startswith("build-and-test") and c.get("conclusion") == "FAILURE"
+                for c in checks
+            )
+            if ci_failed:
+                needs_fix = True
+                review_body = "CI build/test failed. Check the CI logs and fix the issues."
+
+        if not needs_fix:
             continue
-        latest = qa_reviews[-1]
-        if latest.get("state") == "CHANGES_REQUESTED":
-            return {
-                "number": pr["number"],
-                "title": pr["title"],
-                "branch": pr.get("headRefName", ""),
-                "review_body": latest.get("body", ""),
-            }
+
+        pr_num = pr["number"]
+        gh_comment(pr_num, f"CLAIM {WORKER_ID}")
+        time.sleep(3)
+        if not check_claim_won(pr_num):
+            log(f"Lost claim on PR #{pr_num} fix", C.warning, quiet_ok=True)
+            continue
+
+        return {
+            "number": pr_num,
+            "title": pr["title"],
+            "branch": pr.get("headRefName", ""),
+            "review_body": review_body,
+        }
 
     return None
 
@@ -379,6 +467,8 @@ def run_pr_fix(pr):
     prompt += (
         f"Read the full PR diff: gh pr diff {pr_num} --repo {REPO}\n"
         f"Fix the issues raised in the review, then push to branch {branch}. "
+        f"IMPORTANT: Commit and push frequently — after each meaningful chunk of progress. "
+        f"This ensures work is preserved if the session is interrupted. "
         f"Run pnpm run build && pnpm run test before pushing."
     )
 
@@ -389,7 +479,9 @@ def run_pr_fix(pr):
         hb_thread = threading.Thread(target=heartbeat_loop, args=(hb_issue, hb_stop), daemon=True)
         hb_thread.start()
     try:
-        return spawn_agent("code", prompt)
+        result = spawn_agent("code", prompt)
+        gh_comment(pr_num, f"RELEASE {WORKER_ID} — PR fix complete")
+        return result
     finally:
         hb_stop.set()
 
@@ -516,6 +608,8 @@ def run_new_task(task):
         f"You already have the full source of all key files above. "
         f"Start implementing immediately — do not explore the codebase.\n\n"
         f"Write tests first, then implementation. "
+        f"IMPORTANT: Commit and push frequently — after each meaningful chunk of progress. "
+        f"This ensures work is preserved if the session is interrupted. "
         f"Run pnpm run build && pnpm run test before pushing. "
         f"Create a PR targeting main when done. Reference #{issue_num} in the PR body."
     )
@@ -663,8 +757,8 @@ def spawn_agent(agent_type, prompt):
 
 # ── Claim protocol ──────────────────────────────────────────────────
 
-CLAIM_STALE_THRESHOLD = 1800  # 30 minutes — claims older than this are auto-released
-HEARTBEAT_INTERVAL = 1200  # 20 minutes — post bump before stale threshold
+CLAIM_STALE_THRESHOLD = 300  # 5 minutes — claims older than this are auto-released
+HEARTBEAT_INTERVAL = 120  # 2 minutes — post bump before stale threshold
 
 
 def heartbeat_loop(issue_num, stop_event):
@@ -995,6 +1089,12 @@ def _signal_scale_up():
 def run_cycle():
     """Run one dispatch cycle. Returns True if work was done, False if idle."""
 
+    # Priority 0: Merge approved PRs (no agent needed, just gh pr merge)
+    pr = find_mergeable_pr()
+    if pr:
+        merge_pr(pr)
+        return True
+
     # Priority 1: PRs needing review
     pr = find_pr_needing_review()
     if pr:
@@ -1002,7 +1102,7 @@ def run_cycle():
         run_pr_review(pr)
         return True
 
-    # Priority 2: Rejected PRs needing fixes
+    # Priority 2: Rejected PRs or CI failures needing fixes
     pr = find_rejected_pr()
     if pr:
         _signal_scale_up()
