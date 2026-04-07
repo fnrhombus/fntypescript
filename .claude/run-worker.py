@@ -420,19 +420,20 @@ def run_pr_fix(pr):
     pr_num = pr["number"]
     log(f"Fixing rejected PR #{pr_num}: {pr['title']}", C.warning)
 
-    # Create or reuse feature-named worktree from the PR branch
-    worktree_path = os.path.join(WORKTREE_DIR, f"pr-{pr_num}")
+    # Create or reuse worktree — check for any existing worktree for this PR
     branch = pr["branch"]
-
     os.makedirs(WORKTREE_DIR, exist_ok=True)
     worktree_info = ""
-    if os.path.isdir(worktree_path):
+
+    existing_path, existing_branch = find_existing_worktree("pr", pr_num)
+    if existing_path:
+        worktree_path = existing_path
         log(f"Reusing existing worktree for PR #{pr_num}", C.info, quiet_ok=True)
-        # Pull latest changes in case a previous worker pushed
         subprocess.run(["git", "-C", worktree_path, "pull", "--ff-only"],
                        capture_output=True, text=True, timeout=30)
         worktree_info = f"Work in this directory: {worktree_path} (branch: {branch}). Previous work may exist — check git status and continue from where it left off. "
     else:
+        worktree_path = os.path.join(WORKTREE_DIR, f"pr-{pr_num}")
         subprocess.run(["git", "fetch", "origin", branch],
                        capture_output=True, text=True, timeout=30)
         wt_result = subprocess.run(
@@ -584,17 +585,19 @@ def run_new_task(task):
 
     update_board_status(issue_num, "in_progress")
 
-    # Create or reuse feature-named worktree
-    worktree_branch = f"feat/issue-{issue_num}"
-    worktree_path = os.path.join(WORKTREE_DIR, f"issue-{issue_num}")
+    # Create or reuse worktree — check for any existing worktree for this issue
     worktree_info = ""
-
     os.makedirs(WORKTREE_DIR, exist_ok=True)
-    if os.path.isdir(worktree_path):
-        # Reuse existing worktree — previous worker's progress is preserved
+
+    existing_path, existing_branch = find_existing_worktree("issue", issue_num)
+    if existing_path:
+        worktree_path = existing_path
+        worktree_branch = existing_branch or f"feat/issue-{issue_num}"
         log(f"Reusing existing worktree for #{issue_num}", C.info, quiet_ok=True)
         worktree_info = f"Work in this directory: {worktree_path} (branch: {worktree_branch}). Previous work may exist — check git status and continue from where it left off. "
     else:
+        worktree_branch = f"feat/issue-{issue_num}"
+        worktree_path = os.path.join(WORKTREE_DIR, f"issue-{issue_num}")
         wt_result = subprocess.run(
             ["git", "worktree", "add", worktree_path, "-b", worktree_branch],
             capture_output=True, text=True, timeout=30
@@ -885,7 +888,34 @@ def is_blocked(issue_num):
     return False
 
 
-# ── Worktree cleanup ───────────────────────────────────────────────
+# ── Worktree helpers ───────────────────────────────────────────────
+
+def find_existing_worktree(kind, num):
+    """Find any existing worktree for an issue or PR, regardless of naming convention.
+    kind: 'issue' or 'pr'. Returns (path, branch) or (None, None)."""
+    result = subprocess.run(
+        ["git", "worktree", "list", "--porcelain"],
+        capture_output=True, text=True, timeout=30
+    )
+    if result.returncode != 0:
+        return None, None
+
+    pattern = re.compile(rf'(?:^|[-/]){kind}-{num}$')
+    current = {}
+    for line in result.stdout.split("\n"):
+        if line.startswith("worktree "):
+            current = {"path": line.split(" ", 1)[1]}
+        elif line.startswith("branch "):
+            current["branch"] = line.split(" ", 1)[1].replace("refs/heads/", "")
+        elif line == "":
+            if current.get("path"):
+                basename = os.path.basename(current["path"])
+                if pattern.search(basename):
+                    return current["path"], current.get("branch", "")
+            current = {}
+
+    return None, None
+
 
 def cleanup_worktrees():
     result = subprocess.run(
