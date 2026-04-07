@@ -129,7 +129,32 @@ def main():
         else:
             print(f"  #{num}: no agent label, no stale claim, no open PR — may need manual triage")
 
-    print(f"  Fixed {fixed} orphaned claims")
+    print(f"  Fixed {fixed} orphaned issue claims")
+
+    # Also clean stale claims on open PRs
+    print("\n=== Stale PR claims ===")
+    pr_claim_result = run([
+        "gh", "pr", "list", "--repo", REPO, "--state", "open",
+        "--json", "number,title",
+    ])
+    pr_fixed = 0
+    if pr_claim_result.returncode == 0 and pr_claim_result.stdout.strip():
+        prs = json.loads(pr_claim_result.stdout)
+        for pr in prs:
+            num = pr["number"]
+            comments = run([
+                "gh", "pr", "view", str(num), "--repo", REPO,
+                "--json", "comments", "--jq",
+                '.comments | map(select(.body | startswith("CLAIM ") or startswith("RELEASE "))) | .[-1].body // ""',
+            ])
+            last = comments.stdout.strip() if comments.returncode == 0 else ""
+            if last.startswith("CLAIM "):
+                worker = last[6:]
+                print(f"  PR #{num}: stale claim from {worker} — releasing")
+                run(["gh", "api", f"repos/{REPO}/issues/{num}/comments",
+                     "-f", f"body=RELEASE {worker} — stale claim cleaned up by run-cleanup"])
+                pr_fixed += 1
+    print(f"  Fixed {pr_fixed} stale PR claims")
     print("\nDone.")
 
 
