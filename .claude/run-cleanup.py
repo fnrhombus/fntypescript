@@ -21,12 +21,12 @@ def run(cmd, **kwargs):
 def main():
     parser = argparse.ArgumentParser(description="Clean up orphaned worker state")
     parser.add_argument("-y", "--yes", action="store_true",
-                        help="Skip confirmation prompt")
+                        help="Assert that no workers are running right now")
     args = parser.parse_args()
 
     if not args.yes:
-        answer = input("Are there any workers running right now? [y/N] ")
-        if answer.strip().lower() in ("y", "yes"):
+        answer = input("Do you assert that no workers are running right now? [y/N] ")
+        if answer.strip().lower() not in ("y", "yes"):
             print("Stop all workers first, then run this again.")
             sys.exit(1)
 
