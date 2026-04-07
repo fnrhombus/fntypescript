@@ -3,7 +3,8 @@
   "private": true,
   "description": "Multi-plugin demo: all fntypescript example plugins working together",
   "scripts": {
-    "build": "tsc"
+    "typecheck": "fntypescript check",
+    "typecheck:vanilla": "tsc --noEmit"
   },
   "dependencies": {
     "fntypescript": "workspace:*",
