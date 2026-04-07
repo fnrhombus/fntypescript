@@ -1187,211 +1187,175 @@ def run_cycle():
     return run_triage()
 
 
-_scale_queue = None  # set by worker_loop for run_cycle to signal
+EXIT_NO_WORK = 42
 
-
-def worker_loop(max_iters, scale_queue=None):
-    """Run the worker dispatch loop. Called once per worker process.
-
-    If scale_queue is provided (auto-scale mode), sends a message each time
-    work is found so the parent can spawn additional workers.
-    """
-    global _scale_queue
-    _scale_queue = scale_queue
-    swatch = f"{C.emphasis}██{C.success}██{C.warning}██{C.tool}██{C.info}██{C.dim}██{RESET}"
-    log(f"Starting {swatch}{' (' + str(max_iters) + ' iterations)' if max_iters else ''}", C.emphasis, quiet_ok=True)
-    cleanup_worktrees()
-
-    iteration = 0
-    while max_iters == 0 or iteration < max_iters:
-        if STOP_REQUESTED:
-            log("Stop requested, not picking up new work.", C.warning)
-            break
-
-        iteration += 1
-        if VERBOSE:
-            print(f"\n{C.warning}=== Cycle {iteration}{('/' + str(max_iters)) if max_iters else ''} ==={RESET}")
-
-        work_done = run_cycle()
-
-        if STOP_REQUESTED:
-            break
-
-        if work_done:
-            log("Work done. Restarting immediately.", C.success)
-        else:
-            log("No work available and triage found nothing to create. Exiting.", C.warning, quiet_ok=True)
-            break
-
-    log(f"Done ({iteration} iterations).", C.dim, quiet_ok=True)
+_scale_queue = None
 
 
 def run_worker_process(args_ns, color_index, scale_queue=None):
-    """Entry point for each worker subprocess."""
-    global VERBOSE, INTERACTIVE, QUIET, WORKER_ID, C
+    """Entry point for each worker subprocess. Runs one dispatch cycle and exits."""
+    global VERBOSE, INTERACTIVE, QUIET, WORKER_ID, C, _scale_queue
     VERBOSE = args_ns.verbose
-    INTERACTIVE = args_ns.interactive
     QUIET = args_ns.quiet
+    _scale_queue = scale_queue
     _num = random.randint(10000, 99999)
     WORKER_ID = f"{WORKER_NAMES[_num % len(WORKER_NAMES)]}-{_num}"
     C = WorkerColors(color_index)
     signal.signal(signal.SIGINT, handle_sigint)
     signal.signal(signal.SIGUSR1, handle_sigusr1)
     signal.signal(signal.SIGUSR2, handle_sigusr2)
-    worker_loop(args_ns.iterations, scale_queue)
+
+    swatch = f"{C.emphasis}██{C.success}██{C.warning}██{C.tool}██{C.info}██{C.dim}██{RESET}"
+    log(f"Starting {swatch}", C.emphasis, quiet_ok=True)
+
+    if STOP_REQUESTED:
+        log("Stop requested before starting.", C.warning)
+        sys.exit(0)
+
+    cleanup_worktrees()
+    work_done = run_cycle()
+    log("Cycle complete." if work_done else "No work found.", C.dim, quiet_ok=True)
+    sys.exit(0 if work_done else EXIT_NO_WORK)
 
 
 def main():
     global VERBOSE, INTERACTIVE, QUIET
-    parser = argparse.ArgumentParser(description="fntypescript worker")
+    parser = argparse.ArgumentParser(description="fntypescript worker swarm")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Show full claude output")
-    parser.add_argument("-s", "--silent", action="store_true",
-                        help="Suppress all output except errors")
-    parser.add_argument("-i", "--interactive", action="store_true",
-                        help="Interactive mode: forward stdin for live steering")
-    parser.add_argument("-n", "--iterations", type=int, default=0, metavar="N",
-                        help="Number of iterations (0 = infinite, default: 0)")
-    parser.add_argument("-w", "--workers", type=int, default=1, metavar="W",
-                        help="Number of parallel workers (default: 1)")
     parser.add_argument("-q", "--quiet", action="store_true",
-                        help="Suppress output from workers that find no work")
-    parser.add_argument("--auto-scale", action="store_true",
-                        help="Start with 1 worker, scale up as work is found. "
-                             "--workers sets the max (unlimited if omitted)")
+                        help="Suppress idle/no-work output")
+    parser.add_argument("-w", "--max-workers", type=int, default=0, metavar="N",
+                        help="Maximum concurrent workers (0 = unlimited, default: 0)")
+    parser.add_argument("-i", "--interactive", action="store_true",
+                        help="Run one interactive cycle (no supervisor, stdin forwarded)")
     args = parser.parse_args()
     VERBOSE = args.verbose
-    INTERACTIVE = args.interactive
     QUIET = args.quiet
 
-    if args.interactive and (args.workers > 1 or args.auto_scale):
-        print(f"\033[91mError: --interactive is not compatible with multiple workers{RESET}")
-        sys.exit(1)
+    if args.interactive:
+        global INTERACTIVE
+        INTERACTIVE = True
+        signal.signal(signal.SIGINT, handle_sigint)
+        run_cycle()
+        return
 
-    # Keyboard listener for ctrl+o verbose toggle (all non-interactive modes)
-    child_processes = []  # shared with keyboard_listener
+    # ── Supervisor mode ────────────────────────────────────────────
+    global WORKER_ID, C
+    import multiprocessing
+    WORKER_ID = "supervisor"
+    C = SupervisorColors()
 
-    def start_keyboard_listener():
-        def keyboard_listener():
-            import tty, termios
-            fd = sys.stdin.fileno()
-            old = termios.tcgetattr(fd)
-            try:
-                tty.setcbreak(fd)
-                while True:
-                    ch = sys.stdin.read(1)
-                    if ch == '\x0f':  # ctrl+o
-                        for p in child_processes:
-                            if p.is_alive():
-                                os.kill(p.pid, signal.SIGUSR1)
-                        handle_sigusr1(None, None)
-                    elif ch == '\x11':  # ctrl+q
-                        for p in child_processes:
-                            if p.is_alive():
-                                os.kill(p.pid, signal.SIGUSR2)
-                        handle_sigusr2(None, None)
-            except (EOFError, OSError):
-                pass
-            finally:
-                termios.tcsetattr(fd, termios.TCSADRAIN, old)
+    child_processes = []
 
-        t = threading.Thread(target=keyboard_listener, daemon=True)
-        t.start()
-
-    if args.auto_scale:
-        global WORKER_ID, C
-        import multiprocessing
-        WORKER_ID = "supervisor"
-        C = SupervisorColors()
-        log("ctrl+o verbose, ctrl+q quiet", C.dim)
-        start_keyboard_listener()
-        scale_queue = multiprocessing.Queue()
-        max_workers = args.workers if args.workers > 1 else 0  # 0 = unlimited
-        processes = child_processes  # alias so keyboard_listener sees the same list
-
-        # Start first worker
-        stopping = False
-        next_color = 0
-        last_spawn = time.time()
-        PROBE_INTERVAL = 90  # seconds between proactive spawn attempts
-
-        def spawn_worker():
-            nonlocal next_color, last_spawn
-            p = multiprocessing.Process(target=run_worker_process, args=(args, next_color, scale_queue))
-            next_color += 1
-            p.start()
-            processes.append(p)
-            last_spawn = time.time()
-            log(f"Auto-scale: started worker {len(processes)}"
-                f"{' (max ' + str(max_workers) + ')' if max_workers else ''}", C.emphasis)
-
-        spawn_worker()
-
+    def keyboard_listener():
+        import tty, termios
+        fd = sys.stdin.fileno()
+        old = termios.tcgetattr(fd)
         try:
+            tty.setcbreak(fd)
             while True:
-                # Reap finished workers
-                processes = [p for p in processes if p.is_alive()]
-                if not processes:
+                ch = sys.stdin.read(1)
+                if ch == '\x0f':  # ctrl+o
+                    for p in child_processes:
+                        if p.is_alive():
+                            os.kill(p.pid, signal.SIGUSR1)
+                    handle_sigusr1(None, None)
+                elif ch == '\x11':  # ctrl+q
+                    for p in child_processes:
+                        if p.is_alive():
+                            os.kill(p.pid, signal.SIGUSR2)
+                    handle_sigusr2(None, None)
+        except (EOFError, OSError):
+            pass
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+    threading.Thread(target=keyboard_listener, daemon=True).start()
+    log("ctrl+o verbose, ctrl+q quiet", C.dim)
+
+    scale_queue = multiprocessing.Queue()
+    max_workers = args.max_workers
+    processes = child_processes
+    stopping = False
+    next_color = 0
+    last_spawn = 0.0
+    PROBE_INTERVAL = 90
+
+    def alive_count():
+        return sum(1 for p in processes if p.is_alive())
+
+    def at_cap():
+        return max_workers and alive_count() >= max_workers
+
+    def spawn_worker():
+        nonlocal next_color, last_spawn
+        if stopping or at_cap():
+            return
+        p = multiprocessing.Process(target=run_worker_process, args=(args, next_color, scale_queue))
+        next_color += 1
+        p.start()
+        processes.append(p)
+        last_spawn = time.time()
+        n = alive_count()
+        log(f"Started worker ({n} active{', max ' + str(max_workers) if max_workers else ''})", C.emphasis)
+
+    spawn_worker()
+
+    try:
+        while True:
+            # Reap finished workers and check exit codes
+            still_alive = []
+            any_did_work = False
+            for p in processes:
+                if p.is_alive():
+                    still_alive.append(p)
+                else:
+                    p.join()
+                    if p.exitcode != EXIT_NO_WORK:
+                        any_did_work = True
+            processes[:] = still_alive
+
+            # Drain scale-up signals
+            scale_signal = False
+            while True:
+                try:
+                    scale_queue.get_nowait()
+                    scale_signal = True
+                except Exception:
                     break
 
-                at_cap = max_workers and len(processes) >= max_workers
-
-                # Check for scale-up signals (non-blocking)
-                try:
-                    scale_queue.get(timeout=1)
-                    if not stopping and not at_cap:
-                        spawn_worker()
-                except Exception:
-                    pass  # queue.Empty on timeout
-
-                # Proactive probe: spawn a worker periodically to check for new work
-                if not stopping and not at_cap and time.time() - last_spawn >= PROBE_INTERVAL:
+            if not stopping:
+                # Scale up on signal
+                if scale_signal:
                     spawn_worker()
-        except KeyboardInterrupt:
-            stopping = True
-            log("Graceful stop — waiting for workers to finish current tasks. (ctrl+c again to force kill)", C.warning)
-            try:
-                for p in processes:
-                    p.join()
-            except KeyboardInterrupt:
-                log("Force killing all workers.", C.error)
-                for p in processes:
-                    if p.is_alive():
-                        p.terminate()
 
-    elif args.workers > 1:
-        WORKER_ID = "supervisor"
-        C = SupervisorColors()
-        log("ctrl+o verbose, ctrl+q quiet", C.dim)
-        start_keyboard_listener()
-        import multiprocessing
-        processes = child_processes
-        for i in range(args.workers):
-            p = multiprocessing.Process(target=run_worker_process, args=(args, i))
-            p.start()
-            processes.append(p)
+                # Respawn immediately when a worker finished work
+                if any_did_work and not processes:
+                    spawn_worker()
 
+                # Proactive probe when idle
+                if not processes and time.time() - last_spawn >= PROBE_INTERVAL:
+                    spawn_worker()
+
+            # Exit when all workers done and stopping
+            if stopping and not processes:
+                break
+
+            time.sleep(1)
+
+    except KeyboardInterrupt:
+        stopping = True
+        log("Graceful stop — waiting for workers to finish. (ctrl+c to force kill)", C.warning)
         try:
             for p in processes:
-                p.join()
-        except KeyboardInterrupt:
-            log("Graceful stop — waiting for workers to finish current tasks. (ctrl+c again to force kill)", C.warning)
-            try:
-                for p in processes:
+                if p.is_alive():
                     p.join()
-            except KeyboardInterrupt:
-                log("Force killing all workers.", C.error)
-                for p in processes:
-                    if p.is_alive():
-                        p.terminate()
-    else:
-        signal.signal(signal.SIGINT, handle_sigint)
-        signal.signal(signal.SIGUSR1, handle_sigusr1)
-        signal.signal(signal.SIGUSR2, handle_sigusr2)
-        if not args.interactive:
-            log("ctrl+o verbose, ctrl+q quiet", C.dim)
-            start_keyboard_listener()
-        worker_loop(args.iterations)
+        except KeyboardInterrupt:
+            log("Force killing all workers.", C.error)
+            for p in processes:
+                if p.is_alive():
+                    p.terminate()
 
 
 if __name__ == "__main__":

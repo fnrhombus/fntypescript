@@ -2,51 +2,27 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Worker 1",
+      "label": "Start Swarm",
       "type": "shell",
-      "command": ".claude/run-worker",
+      "command": ".claude/run-swarm --max-workers 3",
       "isBackground": true,
       "problemMatcher": [],
       "presentation": {
-        "group": "workers",
         "reveal": "always",
         "panel": "dedicated",
         "close": true
       }
     },
     {
-      "label": "Worker 2",
+      "label": "Review Issues",
       "type": "shell",
-      "command": ".claude/run-worker",
+      "command": ".claude/run-review",
       "isBackground": true,
       "problemMatcher": [],
       "presentation": {
-        "group": "workers",
         "reveal": "always",
         "panel": "dedicated",
         "close": true
-      }
-    },
-    {
-      "label": "Worker 3",
-      "type": "shell",
-      "command": ".claude/run-worker",
-      "isBackground": true,
-      "problemMatcher": [],
-      "presentation": {
-        "group": "workers",
-        "reveal": "always",
-        "panel": "dedicated",
-        "close": true
-      }
-    },
-    {
-      "label": "Launch Workers",
-      "dependsOn": ["Worker 1", "Worker 2", "Worker 3"],
-      "dependsOrder": "parallel",
-      "problemMatcher": [],
-      "presentation": {
-        "reveal": "always"
       }
     }
   ]
