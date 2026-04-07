@@ -13,11 +13,19 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": ["dist", "LICENSE"],
+  "bin": {
+    "fntypescript": "dist/cli.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.js"
+    },
+    "./check.js": {
+      "types": "./dist/check.d.ts",
+      "import": "./dist/check.js",
+      "require": "./dist/check.js"
     },
     "./define-plugin.js": {
       "types": "./dist/define-plugin.d.ts",
@@ -39,6 +47,7 @@
     "typescript": ">=5.0.0"
   },
   "devDependencies": {
+    "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
   }
 }
