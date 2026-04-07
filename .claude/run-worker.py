@@ -800,6 +800,8 @@ def truncate(s, n=200):
 
 
 def output_reader(proc, done_event):
+    g = f"{C.dim}│{RESET} "  # gutter prefix for all agent output
+
     for line in proc.stdout:
         line = line.strip()
         if not line:
@@ -808,7 +810,7 @@ def output_reader(proc, done_event):
             msg = json.loads(line)
         except json.JSONDecodeError:
             if VERBOSE:
-                print(line)
+                print(f"{g}{line}")
             continue
 
         t = msg.get("type", "")
@@ -816,25 +818,26 @@ def output_reader(proc, done_event):
         if t == "system" and msg.get("subtype") == "init":
             if VERBOSE:
                 model = msg.get("model", "?")
-                print(f"{C.dim}── session: {msg.get('session_id', '?')[:8]}… model: {model} ──{RESET}")
+                print(f"{g}{C.dim}── session: {msg.get('session_id', '?')[:8]}… model: {model} ──{RESET}")
 
         elif t == "assistant":
             content = msg.get("message", {}).get("content", [])
             for block in content:
                 if block.get("type") == "text":
                     if VERBOSE:
-                        print(f"{C.emphasis}{block['text']}{RESET}")
+                        for text_line in block["text"].strip().split("\n"):
+                            print(f"{g}{C.emphasis}{text_line}{RESET}")
                     else:
                         for para in block["text"].strip().split("\n"):
                             para = para.strip()
                             if para:
-                                print(f"{C.info}{ts()} [{WORKER_ID}] {para}{RESET}")
+                                print(f"{g}{C.info}{para}{RESET}")
                                 break
                 elif block.get("type") == "tool_use" and VERBOSE:
                     name = block.get("name", "?")
                     inp = block.get("input", {})
                     desc = format_tool_input(name, inp)
-                    print(f"  {C.tool}▶ {name}{RESET} {C.dim}{truncate(desc)}{RESET}")
+                    print(f"{g}{C.tool}▶ {name}{RESET} {C.dim}{truncate(desc)}{RESET}")
 
         elif t == "user":
             if VERBOSE:
@@ -848,17 +851,17 @@ def output_reader(proc, done_event):
                 if content and isinstance(content[0], dict):
                     is_error = is_error or content[0].get("is_error", False)
                 if stderr and not stdout:
-                    print(f"  {C.error}✗ {truncate(stderr)}{RESET}")
+                    print(f"{g}{C.error}✗ {truncate(stderr)}{RESET}")
                 elif is_error:
-                    print(f"  {C.error}✗ {truncate(stdout or stderr)}{RESET}")
+                    print(f"{g}{C.error}✗ {truncate(stdout or stderr)}{RESET}")
                 elif stdout:
-                    print(f"  {C.tool_ok}✓ {truncate(stdout)}{RESET}")
+                    print(f"{g}{C.tool_ok}✓ {truncate(stdout)}{RESET}")
 
         elif t == "result":
             cost = msg.get("total_cost_usd", 0)
             dur = msg.get("duration_ms", 0) / 1000
             turns = msg.get("num_turns", 0)
-            print(f"{C.dim}{ts()} ── done: {turns} turns, {dur:.1f}s, ${cost:.4f} ──{RESET}")
+            print(f"{g}{C.dim}── done: {turns} turns, {dur:.1f}s, ${cost:.4f} ──{RESET}")
             done_event.set()
 
     sys.stdout.flush()
