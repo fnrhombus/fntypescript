@@ -876,8 +876,12 @@ def run_cycle():
     return run_triage()
 
 
-def worker_loop(max_iters):
-    """Run the worker dispatch loop. Called once per worker process."""
+def worker_loop(max_iters, scale_queue=None):
+    """Run the worker dispatch loop. Called once per worker process.
+
+    If scale_queue is provided (auto-scale mode), sends a message each time
+    work is found so the parent can spawn additional workers.
+    """
     log(f"Starting{' (' + str(max_iters) + ' iterations)' if max_iters else ''}", BOLD)
     cleanup_worktrees()
 
@@ -898,6 +902,8 @@ def worker_loop(max_iters):
 
         if work_done:
             log("Work done. Restarting immediately.", GREEN)
+            if scale_queue:
+                scale_queue.put("scale_up")
         else:
             log("No work available and triage found nothing to create. Exiting.", YELLOW)
             break
@@ -905,7 +911,7 @@ def worker_loop(max_iters):
     log(f"Done ({iteration} iterations).", DIM)
 
 
-def run_worker_process(args_ns):
+def run_worker_process(args_ns, scale_queue=None):
     """Entry point for each worker subprocess."""
     global VERBOSE, INTERACTIVE, WORKER_ID
     VERBOSE = args_ns.verbose
@@ -914,7 +920,7 @@ def run_worker_process(args_ns):
     _num = random.randint(10000, 99999)
     WORKER_ID = f"{WORKER_NAMES[_num % len(WORKER_NAMES)]}-{_num}"
     signal.signal(signal.SIGINT, handle_sigint)
-    worker_loop(args_ns.iterations)
+    worker_loop(args_ns.iterations, scale_queue)
 
 
 def main():
@@ -930,15 +936,55 @@ def main():
                         help="Number of iterations (0 = infinite, default: 0)")
     parser.add_argument("-w", "--workers", type=int, default=1, metavar="W",
                         help="Number of parallel workers (default: 1)")
+    parser.add_argument("--auto-scale", action="store_true",
+                        help="Start with 1 worker, scale up as work is found. "
+                             "--workers sets the max (unlimited if omitted)")
     args = parser.parse_args()
     VERBOSE = args.verbose
     INTERACTIVE = args.interactive
 
-    if args.workers > 1:
-        if args.interactive:
-            print(f"{RED}Error: --interactive is not compatible with --workers > 1{RESET}")
-            sys.exit(1)
+    if args.interactive and (args.workers > 1 or args.auto_scale):
+        print(f"{RED}Error: --interactive is not compatible with multiple workers{RESET}")
+        sys.exit(1)
 
+    if args.auto_scale:
+        import multiprocessing
+        scale_queue = multiprocessing.Queue()
+        max_workers = args.workers if args.workers > 1 else 0  # 0 = unlimited
+        processes = []
+
+        # Start first worker
+        p = multiprocessing.Process(target=run_worker_process, args=(args, scale_queue))
+        p.start()
+        processes.append(p)
+        log(f"Auto-scale: started worker 1{' (max ' + str(max_workers) + ')' if max_workers else ''}", BOLD)
+
+        try:
+            while True:
+                # Reap finished workers
+                processes = [p for p in processes if p.is_alive()]
+                if not processes:
+                    break
+
+                # Check for scale-up signals (non-blocking)
+                try:
+                    scale_queue.get(timeout=1)
+                    at_cap = max_workers and len(processes) >= max_workers
+                    if not at_cap:
+                        p = multiprocessing.Process(target=run_worker_process, args=(args, scale_queue))
+                        p.start()
+                        processes.append(p)
+                        log(f"Auto-scale: started worker {len(processes)}"
+                            f"{' (max ' + str(max_workers) + ')' if max_workers else ''}", BOLD)
+                except Exception:
+                    pass  # queue.Empty on timeout — just loop
+        except KeyboardInterrupt:
+            for p in processes:
+                p.join(timeout=10)
+                if p.is_alive():
+                    p.terminate()
+
+    elif args.workers > 1:
         import multiprocessing
         processes = []
         for _ in range(args.workers):
