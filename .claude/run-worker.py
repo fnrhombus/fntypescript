@@ -1130,7 +1130,7 @@ def main():
         stopping = False
         next_color = 0
         last_spawn = time.time()
-        PROBE_INTERVAL = 30  # seconds between proactive spawn attempts
+        PROBE_INTERVAL = 90  # seconds between proactive spawn attempts
 
         def spawn_worker():
             nonlocal next_color, last_spawn
