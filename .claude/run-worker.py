@@ -225,10 +225,10 @@ def get_codebase_context():
 # ── Priority 0: Merge approved PRs ─────────────────────────────────
 
 def find_mergeable_pr():
-    """Find an open PR where CI passed and fnnitpick approved."""
+    """Find an open PR where fnnitpick approved and auto-merge is not already enabled."""
     result = subprocess.run(
         ["gh", "pr", "list", "--repo", REPO, "--state", "open",
-         "--json", "number,title,reviews,statusCheckRollup"],
+         "--json", "number,title,reviews,autoMergeRequest"],
         capture_output=True, text=True, timeout=30
     )
     if result.returncode != 0 or not result.stdout.strip():
@@ -236,6 +236,10 @@ def find_mergeable_pr():
 
     prs = json.loads(result.stdout)
     for pr in prs:
+        # Skip if auto-merge already enabled
+        if pr.get("autoMergeRequest"):
+            continue
+
         reviews = pr.get("reviews", [])
         qa_reviews = [r for r in reviews
                       if r.get("author", {}).get("login") == "fnnitpick"]
@@ -245,31 +249,22 @@ def find_mergeable_pr():
         if latest.get("state") != "APPROVED":
             continue
 
-        # Check CI passed
-        checks = pr.get("statusCheckRollup", [])
-        ci_passed = any(
-            c.get("name", "").startswith("build-and-test") and c.get("conclusion") == "SUCCESS"
-            for c in checks
-        )
-        if not ci_passed:
-            continue
-
         return {"number": pr["number"], "title": pr["title"]}
 
     return None
 
 
 def merge_pr(pr):
-    """Merge an approved PR."""
+    """Merge an approved PR. Uses --auto to queue merge when checks pass."""
     pr_num = pr["number"]
     log(f"Merging PR #{pr_num}: {pr['title']}", C.success)
     result = subprocess.run(
         ["gh", "pr", "merge", str(pr_num), "--repo", REPO,
-         "--squash", "--delete-branch"],
+         "--squash", "--delete-branch", "--auto"],
         capture_output=True, text=True, timeout=60
     )
     if result.returncode == 0:
-        log(f"PR #{pr_num} merged successfully", C.success)
+        log(f"PR #{pr_num} auto-merge enabled", C.success)
     else:
         log(f"Failed to merge PR #{pr_num}: {result.stderr.strip()}", C.error)
     return True
@@ -307,6 +302,7 @@ def find_pr_needing_review():
 
         # Claim the PR review (same protocol as tasks)
         pr_num = pr["number"]
+        release_stale_claims(pr_num)
         gh_comment(pr_num, f"CLAIM {WORKER_ID}")
         time.sleep(3)
         if not check_claim_won(pr_num):
@@ -408,6 +404,7 @@ def find_rejected_pr():
             continue
 
         pr_num = pr["number"]
+        release_stale_claims(pr_num)
         gh_comment(pr_num, f"CLAIM {WORKER_ID}")
         time.sleep(3)
         if not check_claim_won(pr_num):
@@ -734,6 +731,9 @@ def run_triage():
 
 # ── Agent spawning ──────────────────────────────────────────────────
 
+AGENT_NAMES = {"code": "fn10x", "qa": "fnnitpick", "plan": "fnplanner", "research": "fnlmgtfy"}
+
+
 def spawn_agent(agent_type, prompt):
     """Spawn a claude agent and wait for it to complete. Returns True."""
     cmd = [
@@ -761,8 +761,9 @@ def spawn_agent(agent_type, prompt):
     proc.stdin.flush()
 
     proc.stdin.close()
+    agent_name = AGENT_NAMES.get(agent_type, agent_type)
     done_event = threading.Event()
-    out_thread = threading.Thread(target=output_reader, args=(proc, done_event), daemon=True)
+    out_thread = threading.Thread(target=output_reader, args=(proc, done_event, agent_name), daemon=True)
     out_thread.start()
 
     done_event.wait(timeout=600)
@@ -835,12 +836,19 @@ def release_stale_claims(issue_num):
             if age > CLAIM_STALE_THRESHOLD:
                 log(f"Releasing stale claim from {worker} on #{issue_num} ({int(age)}s old)", C.warning)
                 gh_comment(issue_num, f"RELEASE {worker} — stale claim auto-released by {WORKER_ID}")
-                # Re-add agent label so the task returns to the pool
-                subprocess.run(
-                    ["gh", "issue", "edit", str(issue_num), "--add-label", "agent:fn10x",
-                     "--repo", REPO],
+                # Re-add agent label if this is an issue (not a PR)
+                is_pr = subprocess.run(
+                    ["gh", "pr", "view", str(issue_num), "--repo", REPO,
+                     "--json", "number", "--jq", ".number"],
                     capture_output=True, text=True, timeout=30
                 )
+                if is_pr.returncode != 0:
+                    # Not a PR — it's an issue, re-add label
+                    subprocess.run(
+                        ["gh", "issue", "edit", str(issue_num), "--add-label", "agent:fn10x",
+                         "--repo", REPO],
+                        capture_output=True, text=True, timeout=30
+                    )
         except (ValueError, OSError):
             pass
 
@@ -1072,8 +1080,13 @@ def truncate(s, n=200):
     return s[:n] + "…" if len(s) > n else s
 
 
-def output_reader(proc, done_event):
-    g = f"{C.dim}│{RESET} "  # gutter prefix for all agent output
+def output_reader(proc, done_event, agent_name="agent"):
+    prefix = f"{WORKER_ID}({agent_name})"
+
+    def alog(msg, color=None):
+        if color is None:
+            color = C.info
+        print(f"{color}{ts()} [{prefix}] {msg}{RESET}")
 
     for line in proc.stdout:
         line = line.strip()
@@ -1083,7 +1096,7 @@ def output_reader(proc, done_event):
             msg = json.loads(line)
         except json.JSONDecodeError:
             if VERBOSE:
-                print(f"{g}{line}")
+                alog(line, C.dim)
             continue
 
         t = msg.get("type", "")
@@ -1091,7 +1104,7 @@ def output_reader(proc, done_event):
         if t == "system" and msg.get("subtype") == "init":
             if VERBOSE:
                 model = msg.get("model", "?")
-                print(f"{g}{C.dim}── session: {msg.get('session_id', '?')[:8]}… model: {model} ──{RESET}")
+                alog(f"session: {msg.get('session_id', '?')[:8]}… model: {model}", C.dim)
 
         elif t == "assistant":
             content = msg.get("message", {}).get("content", [])
@@ -1099,18 +1112,18 @@ def output_reader(proc, done_event):
                 if block.get("type") == "text":
                     if VERBOSE:
                         for text_line in block["text"].strip().split("\n"):
-                            print(f"{g}{C.emphasis}{text_line}{RESET}")
+                            alog(text_line, C.emphasis)
                     else:
                         for para in block["text"].strip().split("\n"):
                             para = para.strip()
                             if para:
-                                print(f"{g}{C.info}{para}{RESET}")
+                                alog(para)
                                 break
                 elif block.get("type") == "tool_use" and VERBOSE:
                     name = block.get("name", "?")
                     inp = block.get("input", {})
                     desc = format_tool_input(name, inp)
-                    print(f"{g}{C.tool}▶ {name}{RESET} {C.dim}{truncate(desc)}{RESET}")
+                    alog(f"▶ {name} {C.dim}{truncate(desc)}", C.tool)
 
         elif t == "user":
             if VERBOSE:
@@ -1124,17 +1137,17 @@ def output_reader(proc, done_event):
                 if content and isinstance(content[0], dict):
                     is_error = is_error or content[0].get("is_error", False)
                 if stderr and not stdout:
-                    print(f"{g}{C.error}✗ {truncate(stderr)}{RESET}")
+                    alog(f"✗ {truncate(stderr)}", C.error)
                 elif is_error:
-                    print(f"{g}{C.error}✗ {truncate(stdout or stderr)}{RESET}")
+                    alog(f"✗ {truncate(stdout or stderr)}", C.error)
                 elif stdout:
-                    print(f"{g}{C.tool_ok}✓ {truncate(stdout)}{RESET}")
+                    alog(f"✓ {truncate(stdout)}", C.tool_ok)
 
         elif t == "result":
             cost = msg.get("total_cost_usd", 0)
             dur = msg.get("duration_ms", 0) / 1000
             turns = msg.get("num_turns", 0)
-            print(f"{g}{C.dim}── done: {turns} turns, {dur:.1f}s, ${cost:.4f} ──{RESET}")
+            alog(f"done: {turns} turns, {dur:.1f}s, ${cost:.4f}", C.dim)
             done_event.set()
 
     sys.stdout.flush()
