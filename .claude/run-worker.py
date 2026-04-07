@@ -1031,15 +1031,41 @@ def main():
         print(f"\033[91mError: --interactive is not compatible with multiple workers{RESET}")
         sys.exit(1)
 
+    # Keyboard listener for ctrl+o verbose toggle (all non-interactive modes)
+    child_processes = []  # shared with keyboard_listener
+
+    def start_keyboard_listener():
+        def keyboard_listener():
+            import tty, termios
+            fd = sys.stdin.fileno()
+            old = termios.tcgetattr(fd)
+            try:
+                tty.setcbreak(fd)
+                while True:
+                    ch = sys.stdin.read(1)
+                    if ch == '\x0f':  # ctrl+o
+                        for p in child_processes:
+                            if p.is_alive():
+                                os.kill(p.pid, signal.SIGUSR1)
+                        handle_sigusr1(None, None)
+            except (EOFError, OSError):
+                pass
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+        t = threading.Thread(target=keyboard_listener, daemon=True)
+        t.start()
+
     if args.auto_scale:
         global WORKER_ID, C
         import multiprocessing
         WORKER_ID = "supervisor"
         C = SupervisorColors()
-        log(f"pid {os.getpid()} — toggle verbose: kill -USR1 {os.getpid()}", C.dim)
+        log("ctrl+o toggles verbose", C.dim)
+        start_keyboard_listener()
         scale_queue = multiprocessing.Queue()
         max_workers = args.workers if args.workers > 1 else 0  # 0 = unlimited
-        processes = []
+        processes = child_processes  # alias so keyboard_listener sees the same list
 
         # Start first worker
         stopping = False
@@ -1094,8 +1120,10 @@ def main():
     elif args.workers > 1:
         WORKER_ID = "supervisor"
         C = SupervisorColors()
+        log("ctrl+o toggles verbose", C.dim)
+        start_keyboard_listener()
         import multiprocessing
-        processes = []
+        processes = child_processes
         for i in range(args.workers):
             p = multiprocessing.Process(target=run_worker_process, args=(args, i))
             p.start()
@@ -1117,7 +1145,9 @@ def main():
     else:
         signal.signal(signal.SIGINT, handle_sigint)
         signal.signal(signal.SIGUSR1, handle_sigusr1)
-        log(f"pid {os.getpid()} — toggle verbose: kill -USR1 {os.getpid()}", C.dim)
+        if not args.interactive:
+            log("ctrl+o toggles verbose", C.dim)
+            start_keyboard_listener()
         worker_loop(args.iterations)
 
 
