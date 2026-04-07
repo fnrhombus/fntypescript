@@ -1217,7 +1217,7 @@ def main():
                         if p.is_alive():
                             os.kill(p.pid, signal.SIGUSR1)
                     handle_sigusr1(None, None)
-                elif ch == '\x11':  # ctrl+q
+                elif ch == '\x1c':  # ctrl+\
                     for p in child_processes:
                         if p.is_alive():
                             os.kill(p.pid, signal.SIGUSR2)
@@ -1228,7 +1228,7 @@ def main():
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
     threading.Thread(target=keyboard_listener, daemon=True).start()
-    log("ctrl+o verbose, ctrl+q quiet", C.dim)
+    log("ctrl+o verbose, ctrl+\\ quiet", C.dim)
 
     scale_queue = multiprocessing.Queue()
     max_workers = args.max_workers
