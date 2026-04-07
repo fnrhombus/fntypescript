@@ -97,6 +97,7 @@ class SupervisorColors:
     dim       = "\033[2;37m"
     triage    = "\033[37m"
 
+CONTEXT_CACHE_FILE = "/tmp/fntypescript-codebase-context.cache"
 LOCK_FILE = "/tmp/fntypescript-worker.lock"
 WORKTREE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "worktrees")
 TRIAGE_LOCK_FILE = "/tmp/fntypescript-triage.lock"
@@ -167,6 +168,56 @@ def update_board_status(issue_num, status):
          "--single-select-option-id", option_id],
         capture_output=True, text=True, timeout=30
     )
+
+
+# ── Codebase context cache ─────────────────────────────────────────
+
+def get_codebase_context():
+    """Return a cached codebase snapshot. Regenerates when HEAD changes."""
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=10
+    ).stdout.strip()
+
+    # Check cache
+    if os.path.exists(CONTEXT_CACHE_FILE):
+        with open(CONTEXT_CACHE_FILE) as f:
+            lines = f.readlines()
+            if lines and lines[0].strip() == head:
+                return "".join(lines[1:])
+
+    # Generate: file tree + key file contents
+    tree = subprocess.run(
+        ["git", "ls-files", "--", "packages/", "examples/"],
+        capture_output=True, text=True, timeout=10
+    ).stdout.strip()
+
+    # Read key source files (small, high-signal)
+    key_files = [
+        "packages/fntypescript/src/index.ts",
+        "packages/fntypescript/src/types.ts",
+        "packages/fntypescript/src/proxy.ts",
+        "packages/fntypescript/src/define-plugin.ts",
+        "packages/fntypescript/src/loader.ts",
+        "packages/fntypescript/package.json",
+    ]
+    file_contents = []
+    for path in key_files:
+        if os.path.exists(path):
+            with open(path) as f:
+                content = f.read()
+            file_contents.append(f"### {path}\n```ts\n{content}\n```")
+
+    context = (
+        f"## Project file tree\n```\n{tree}\n```\n\n"
+        f"## Key source files\n\n" + "\n\n".join(file_contents)
+    )
+
+    # Cache it
+    with open(CONTEXT_CACHE_FILE, "w") as f:
+        f.write(head + "\n")
+        f.write(context)
+
+    return context
 
 
 # ── Priority 1: PRs needing review ─────────────────────────────────
@@ -312,6 +363,8 @@ def run_pr_fix(pr):
         if issue.returncode == 0:
             issue_context += issue.stdout + "\n\n"
 
+    codebase = get_codebase_context()
+
     prompt = (
         f"PR #{pr_num} was rejected by the QA reviewer. Fix the issues and push to the same branch.\n\n"
         f"{worktree_info}\n\n"
@@ -319,6 +372,7 @@ def run_pr_fix(pr):
     )
     if issue_context:
         prompt += f"Original issue specs:\n\n{issue_context}\n\n"
+    prompt += f"## Codebase context (cached — do NOT re-explore these files)\n\n{codebase}\n\n"
     prompt += (
         f"Read the full PR diff: gh pr diff {pr_num} --repo {REPO}\n"
         f"Fix the issues raised in the review, then push to branch {branch}. "
@@ -449,10 +503,15 @@ def run_new_task(task):
     )
     spec = issue.stdout.strip() if issue.returncode == 0 else f"Issue #{issue_num}"
 
+    codebase = get_codebase_context()
+
     prompt = (
         f"Implement issue #{issue_num} in repo {REPO}.\n\n"
         f"{worktree_info}\n\n"
         f"## Spec\n\n{spec}\n\n"
+        f"## Codebase context (cached — do NOT re-explore these files)\n\n{codebase}\n\n"
+        f"You already have the full source of all key files above. "
+        f"Start implementing immediately — do not explore the codebase.\n\n"
         f"Write tests first, then implementation. "
         f"Run pnpm run build && pnpm run test before pushing. "
         f"Create a PR targeting main when done. Reference #{issue_num} in the PR body."
