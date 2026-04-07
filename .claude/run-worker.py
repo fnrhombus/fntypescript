@@ -913,6 +913,12 @@ def handle_sigint(signum, frame):
     log("Graceful stop requested — finishing current task, then exiting. (ctrl+c again to force kill)", C.warning)
 
 
+def handle_sigusr1(signum, frame):
+    global VERBOSE
+    VERBOSE = not VERBOSE
+    log(f"Verbose {'ON' if VERBOSE else 'OFF'}", C.emphasis)
+
+
 def _signal_scale_up():
     if _scale_queue:
         _scale_queue.put("scale_up")
@@ -997,6 +1003,7 @@ def run_worker_process(args_ns, color_index, scale_queue=None):
     WORKER_ID = f"{WORKER_NAMES[_num % len(WORKER_NAMES)]}-{_num}"
     C = WorkerColors(color_index)
     signal.signal(signal.SIGINT, handle_sigint)
+    signal.signal(signal.SIGUSR1, handle_sigusr1)
     worker_loop(args_ns.iterations, scale_queue)
 
 
@@ -1029,6 +1036,7 @@ def main():
         import multiprocessing
         WORKER_ID = "supervisor"
         C = SupervisorColors()
+        log(f"pid {os.getpid()} — toggle verbose: kill -USR1 {os.getpid()}", C.dim)
         scale_queue = multiprocessing.Queue()
         max_workers = args.workers if args.workers > 1 else 0  # 0 = unlimited
         processes = []
@@ -1108,6 +1116,8 @@ def main():
                         p.terminate()
     else:
         signal.signal(signal.SIGINT, handle_sigint)
+        signal.signal(signal.SIGUSR1, handle_sigusr1)
+        log(f"pid {os.getpid()} — toggle verbose: kill -USR1 {os.getpid()}", C.dim)
         worker_loop(args.iterations)
 
 
