@@ -113,6 +113,7 @@ C = WorkerColors(0)
 VERBOSE = False
 INTERACTIVE = False
 STOP_REQUESTED = False
+QUIET = False  # suppress output from workers that find no work
 
 QA_TOKEN_CMD = ["python3",
                 os.path.expanduser("~/.config/fnteam/gh-bot-token.py"), "qa"]
@@ -122,7 +123,9 @@ def ts():
     return time.strftime("%H:%M:%S")
 
 
-def log(msg, color=None):
+def log(msg, color=None, quiet_ok=False):
+    if QUIET and quiet_ok:
+        return
     if color is None:
         color = C.info
     print(f"{color}{ts()} [{WORKER_ID}] {msg}{RESET}")
@@ -433,7 +436,7 @@ def find_ready_task():
 
             if is_blocked(issue_num):
                 if VERBOSE:
-                    log(f"#{issue_num} is blocked, skipping...")
+                    log(f"#{issue_num} is blocked, skipping...", quiet_ok=True)
                 continue
 
             release_stale_claims(issue_num)
@@ -441,7 +444,7 @@ def find_ready_task():
             time.sleep(3)
 
             if not check_claim_won(issue_num):
-                log(f"Lost claim on #{issue_num}", C.warning)
+                log(f"Lost claim on #{issue_num}", C.warning, quiet_ok=True)
                 continue
 
             label_check = subprocess.run(
@@ -765,7 +768,7 @@ def is_blocked(issue_num):
             capture_output=True, text=True, timeout=30
         )
         if check.returncode == 0 and check.stdout.strip() == "OPEN":
-            log(f"#{issue_num} blocked on #{ref} (still open)", C.warning)
+            log(f"#{issue_num} blocked on #{ref} (still open)", C.warning, quiet_ok=True)
             return True
 
     return False
@@ -812,7 +815,7 @@ def cleanup_worktrees():
                 log(f"Worktree in use, skipping: {path}")
             continue
 
-        log(f"Cleaning stale worktree: {path} ({branch})", C.dim)
+        log(f"Cleaning stale worktree: {path} ({branch})", C.dim, quiet_ok=True)
         subprocess.run(["git", "worktree", "remove", "--force", path],
                        capture_output=True, text=True, timeout=30)
         if branch and branch != "main":
@@ -978,6 +981,12 @@ def handle_sigusr1(signum, frame):
     log(f"Verbose {'ON' if VERBOSE else 'OFF'}", C.emphasis)
 
 
+def handle_sigusr2(signum, frame):
+    global QUIET
+    QUIET = not QUIET
+    log(f"Quiet {'ON' if QUIET else 'OFF'}", C.emphasis)
+
+
 def _signal_scale_up():
     if _scale_queue:
         _scale_queue.put("scale_up")
@@ -1003,7 +1012,7 @@ def run_cycle():
     # Priority 3: Ready tasks
     task = find_ready_task()
     if task is ALL_BUSY:
-        log("All tasks claimed or blocked. Nothing for this worker to do.", C.info)
+        log("All tasks claimed or blocked. Nothing for this worker to do.", C.info, quiet_ok=True)
         return False
     if task:
         _signal_scale_up()
@@ -1026,7 +1035,7 @@ def worker_loop(max_iters, scale_queue=None):
     global _scale_queue
     _scale_queue = scale_queue
     swatch = f"{C.emphasis}██{C.success}██{C.warning}██{C.tool}██{C.info}██{C.dim}██{RESET}"
-    log(f"Starting {swatch}{' (' + str(max_iters) + ' iterations)' if max_iters else ''}", C.emphasis)
+    log(f"Starting {swatch}{' (' + str(max_iters) + ' iterations)' if max_iters else ''}", C.emphasis, quiet_ok=True)
     cleanup_worktrees()
 
     iteration = 0
@@ -1047,27 +1056,29 @@ def worker_loop(max_iters, scale_queue=None):
         if work_done:
             log("Work done. Restarting immediately.", C.success)
         else:
-            log("No work available and triage found nothing to create. Exiting.", C.warning)
+            log("No work available and triage found nothing to create. Exiting.", C.warning, quiet_ok=True)
             break
 
-    log(f"Done ({iteration} iterations).", C.dim)
+    log(f"Done ({iteration} iterations).", C.dim, quiet_ok=True)
 
 
 def run_worker_process(args_ns, color_index, scale_queue=None):
     """Entry point for each worker subprocess."""
-    global VERBOSE, INTERACTIVE, WORKER_ID, C
+    global VERBOSE, INTERACTIVE, QUIET, WORKER_ID, C
     VERBOSE = args_ns.verbose
     INTERACTIVE = args_ns.interactive
+    QUIET = args_ns.quiet
     _num = random.randint(10000, 99999)
     WORKER_ID = f"{WORKER_NAMES[_num % len(WORKER_NAMES)]}-{_num}"
     C = WorkerColors(color_index)
     signal.signal(signal.SIGINT, handle_sigint)
     signal.signal(signal.SIGUSR1, handle_sigusr1)
+    signal.signal(signal.SIGUSR2, handle_sigusr2)
     worker_loop(args_ns.iterations, scale_queue)
 
 
 def main():
-    global VERBOSE, INTERACTIVE
+    global VERBOSE, INTERACTIVE, QUIET
     parser = argparse.ArgumentParser(description="fntypescript worker")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Show full claude output")
@@ -1079,12 +1090,15 @@ def main():
                         help="Number of iterations (0 = infinite, default: 0)")
     parser.add_argument("-w", "--workers", type=int, default=1, metavar="W",
                         help="Number of parallel workers (default: 1)")
+    parser.add_argument("-q", "--quiet", action="store_true",
+                        help="Suppress output from workers that find no work")
     parser.add_argument("--auto-scale", action="store_true",
                         help="Start with 1 worker, scale up as work is found. "
                              "--workers sets the max (unlimited if omitted)")
     args = parser.parse_args()
     VERBOSE = args.verbose
     INTERACTIVE = args.interactive
+    QUIET = args.quiet
 
     if args.interactive and (args.workers > 1 or args.auto_scale):
         print(f"\033[91mError: --interactive is not compatible with multiple workers{RESET}")
@@ -1107,6 +1121,11 @@ def main():
                             if p.is_alive():
                                 os.kill(p.pid, signal.SIGUSR1)
                         handle_sigusr1(None, None)
+                    elif ch == '\x11':  # ctrl+q
+                        for p in child_processes:
+                            if p.is_alive():
+                                os.kill(p.pid, signal.SIGUSR2)
+                        handle_sigusr2(None, None)
             except (EOFError, OSError):
                 pass
             finally:
@@ -1120,7 +1139,7 @@ def main():
         import multiprocessing
         WORKER_ID = "supervisor"
         C = SupervisorColors()
-        log("ctrl+o toggles verbose", C.dim)
+        log("ctrl+o verbose, ctrl+q quiet", C.dim)
         start_keyboard_listener()
         scale_queue = multiprocessing.Queue()
         max_workers = args.workers if args.workers > 1 else 0  # 0 = unlimited
@@ -1179,7 +1198,7 @@ def main():
     elif args.workers > 1:
         WORKER_ID = "supervisor"
         C = SupervisorColors()
-        log("ctrl+o toggles verbose", C.dim)
+        log("ctrl+o verbose, ctrl+q quiet", C.dim)
         start_keyboard_listener()
         import multiprocessing
         processes = child_processes
@@ -1204,8 +1223,9 @@ def main():
     else:
         signal.signal(signal.SIGINT, handle_sigint)
         signal.signal(signal.SIGUSR1, handle_sigusr1)
+        signal.signal(signal.SIGUSR2, handle_sigusr2)
         if not args.interactive:
-            log("ctrl+o toggles verbose", C.dim)
+            log("ctrl+o verbose, ctrl+q quiet", C.dim)
             start_keyboard_listener()
         worker_loop(args.iterations)
 
