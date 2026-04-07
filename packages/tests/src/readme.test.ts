@@ -11,6 +11,11 @@ import type { PluginDefinition } from "fntypescript/types.js";
  * - The definePlugin usage compiles and works at runtime
  * - The hook signature in the example matches PluginDefinition
  * - The TypeScript code blocks in README.md compile without errors
+ *
+ * Note: loadSubPlugins is an internal implementation detail (loader.js is not in the
+ * package exports map). The README only documents the public API — definePlugin via
+ * "fntypescript/define-plugin.js" — so no internal imports appear here or in the README.
+ * The "README code examples compile" test below catches any import of a non-exported path.
  */
 
 const repoRoot = resolve(__dirname, "../../..");
@@ -93,7 +98,9 @@ describe("README code examples compile", () => {
     const readmePath = join(repoRoot, "README.md");
     const readmeContent = readFileSync(readmePath, "utf-8");
 
-    // Extract TypeScript fenced code blocks
+    // Extract TypeScript fenced code blocks (covers spec checklist: "Code examples in README
+    // are syntactically valid"). This test will fail if any example imports from a path that
+    // is not in the package exports map (e.g., "fntypescript/loader.js" or "fntypescript/proxy.js").
     const codeBlockPattern = /```ts\n([\s\S]*?)```/g;
     const blocks: string[] = [];
     let match: RegExpExecArray | null;
