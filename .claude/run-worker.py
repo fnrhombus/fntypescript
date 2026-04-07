@@ -561,7 +561,7 @@ def release_stale_claims(issue_num):
     result = subprocess.run(
         ["gh", "issue", "view", str(issue_num), "--repo", REPO,
          "--json", "comments", "--jq",
-         '.comments | map(select(.body | startswith("CLAIM ") or startswith("RELEASE ") or startswith("HEARTBEAT "))) | .[] | "\(.createdAt)\t\(.body)"'],
+         r'.comments | map(select(.body | startswith("CLAIM ") or startswith("RELEASE ") or startswith("HEARTBEAT "))) | .[] | "\(.createdAt)\t\(.body)"'],
         capture_output=True, text=True, timeout=30
     )
     if result.returncode != 0 or not result.stdout.strip():
@@ -948,7 +948,9 @@ def main():
         sys.exit(1)
 
     if args.auto_scale:
+        global WORKER_ID
         import multiprocessing
+        WORKER_ID = "supervisor"
         scale_queue = multiprocessing.Queue()
         max_workers = args.workers if args.workers > 1 else 0  # 0 = unlimited
         processes = []
