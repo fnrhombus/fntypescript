@@ -248,7 +248,7 @@ def find_pr_needing_review():
         # Check CI passed
         checks = pr.get("statusCheckRollup", [])
         ci_passed = any(
-            c.get("name") == "build-and-test" and c.get("conclusion") == "SUCCESS"
+            c.get("name", "").startswith("build-and-test") and c.get("conclusion") == "SUCCESS"
             for c in checks
         )
         if not ci_passed:
