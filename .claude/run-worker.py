@@ -915,17 +915,8 @@ def main():
         if work_done:
             log("Work done. Restarting immediately.", GREEN)
         else:
-            if max_iters and iteration >= max_iters:
-                break
-            log(f"No work. Sleeping {IDLE_SLEEP}s...", YELLOW)
-            for i in range(IDLE_SLEEP):
-                if STOP_REQUESTED:
-                    break
-                if VERBOSE:
-                    print(f"\r{DIM}Resuming in {IDLE_SLEEP - i}s (ctrl+c to quit){RESET}", end="")
-                time.sleep(1)
-            if VERBOSE:
-                print()
+            log("No work available and triage found nothing to create. Exiting.", YELLOW)
+            break
 
     log(f"Done ({iteration} iterations).", DIM)
 
