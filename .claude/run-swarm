@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-exec python3 "$(dirname "$0")/run-worker.py" --quiet "$@"
+exec python3 "$(dirname "$0")/run-worker.py" "$@"

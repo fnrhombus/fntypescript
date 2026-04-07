@@ -1,2 +1,2 @@
 @echo off
-python3 "%~dp0run-worker.py" --quiet %*
+python3 "%~dp0run-worker.py" %*
