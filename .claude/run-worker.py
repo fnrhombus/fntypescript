@@ -302,6 +302,7 @@ def find_pr_needing_review():
 
         # Claim the PR review (same protocol as tasks)
         pr_num = pr["number"]
+        release_stale_claims(pr_num)
         gh_comment(pr_num, f"CLAIM {WORKER_ID}")
         time.sleep(3)
         if not check_claim_won(pr_num):
@@ -403,6 +404,7 @@ def find_rejected_pr():
             continue
 
         pr_num = pr["number"]
+        release_stale_claims(pr_num)
         gh_comment(pr_num, f"CLAIM {WORKER_ID}")
         time.sleep(3)
         if not check_claim_won(pr_num):
@@ -834,12 +836,19 @@ def release_stale_claims(issue_num):
             if age > CLAIM_STALE_THRESHOLD:
                 log(f"Releasing stale claim from {worker} on #{issue_num} ({int(age)}s old)", C.warning)
                 gh_comment(issue_num, f"RELEASE {worker} — stale claim auto-released by {WORKER_ID}")
-                # Re-add agent label so the task returns to the pool
-                subprocess.run(
-                    ["gh", "issue", "edit", str(issue_num), "--add-label", "agent:fn10x",
-                     "--repo", REPO],
+                # Re-add agent label if this is an issue (not a PR)
+                is_pr = subprocess.run(
+                    ["gh", "pr", "view", str(issue_num), "--repo", REPO,
+                     "--json", "number", "--jq", ".number"],
                     capture_output=True, text=True, timeout=30
                 )
+                if is_pr.returncode != 0:
+                    # Not a PR — it's an issue, re-add label
+                    subprocess.run(
+                        ["gh", "issue", "edit", str(issue_num), "--add-label", "agent:fn10x",
+                         "--repo", REPO],
+                        capture_output=True, text=True, timeout=30
+                    )
         except (ValueError, OSError):
             pass
 
