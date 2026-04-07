@@ -1137,17 +1137,17 @@ def output_reader(proc, done_event, agent_name="agent"):
                 if content and isinstance(content[0], dict):
                     is_error = is_error or content[0].get("is_error", False)
                 if stderr and not stdout:
-                    print(f"{g}{C.error}✗ {truncate(stderr)}{RESET}")
+                    alog(f"✗ {truncate(stderr)}", C.error)
                 elif is_error:
-                    print(f"{g}{C.error}✗ {truncate(stdout or stderr)}{RESET}")
+                    alog(f"✗ {truncate(stdout or stderr)}", C.error)
                 elif stdout:
-                    print(f"{g}{C.tool_ok}✓ {truncate(stdout)}{RESET}")
+                    alog(f"✓ {truncate(stdout)}", C.tool_ok)
 
         elif t == "result":
             cost = msg.get("total_cost_usd", 0)
             dur = msg.get("duration_ms", 0) / 1000
             turns = msg.get("num_turns", 0)
-            print(f"{g}{C.dim}── done: {turns} turns, {dur:.1f}s, ${cost:.4f} ──{RESET}")
+            alog(f"done: {turns} turns, {dur:.1f}s, ${cost:.4f}", C.dim)
             done_event.set()
 
     sys.stdout.flush()
