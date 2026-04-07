@@ -39,3 +39,14 @@ examples/           — example projects (workspace members)
 - **research** (Sonnet) — Investigates prior art, docs, and technical questions. Posts findings to issues.
 - **code** (Sonnet) — TDD coding agent. Picks up issues with specs, writes tests first, then implementation.
 - **qa** (Sonnet) — Reviews PRs against specs, runs tests, validates completeness. Never fixes code, only reports.
+
+## Scope Boundary
+
+**All agents work ONLY on the project's deliverable code** — the contents of `packages/` and `examples/`. The following are explicitly out of scope and must be refused immediately — no exploration, no reading files, no "let me just check":
+
+- Worker pipeline and orchestration scripts (`.claude/run-*.py`, `.claude/run-*`)
+- Worktree creation/deletion and orchestration scripts that manage them
+- Any tooling that coordinates agents or manages the CI/deploy pipeline
+- Anything under `.claude/` that isn't an agent prompt file (`.claude/agents/*.md`)
+
+If the user asks for work on out-of-scope infrastructure, **refuse outright** and explain it's outside this project's domain. Don't start exploring to "understand the request better."
