@@ -1036,11 +1036,20 @@ def main():
         # Start first worker
         stopping = False
         next_color = 0
-        p = multiprocessing.Process(target=run_worker_process, args=(args, next_color, scale_queue))
-        next_color += 1
-        p.start()
-        processes.append(p)
-        log(f"Auto-scale: started worker 1{' (max ' + str(max_workers) + ')' if max_workers else ''}", C.emphasis)
+        last_spawn = time.time()
+        PROBE_INTERVAL = 30  # seconds between proactive spawn attempts
+
+        def spawn_worker():
+            nonlocal next_color, last_spawn
+            p = multiprocessing.Process(target=run_worker_process, args=(args, next_color, scale_queue))
+            next_color += 1
+            p.start()
+            processes.append(p)
+            last_spawn = time.time()
+            log(f"Auto-scale: started worker {len(processes)}"
+                f"{' (max ' + str(max_workers) + ')' if max_workers else ''}", C.emphasis)
+
+        spawn_worker()
 
         try:
             while True:
@@ -1049,21 +1058,19 @@ def main():
                 if not processes:
                     break
 
+                at_cap = max_workers and len(processes) >= max_workers
+
                 # Check for scale-up signals (non-blocking)
                 try:
                     scale_queue.get(timeout=1)
-                    if stopping:
-                        continue  # don't spawn new workers after ctrl+c
-                    at_cap = max_workers and len(processes) >= max_workers
-                    if not at_cap:
-                        p = multiprocessing.Process(target=run_worker_process, args=(args, next_color, scale_queue))
-                        next_color += 1
-                        p.start()
-                        processes.append(p)
-                        log(f"Auto-scale: started worker {len(processes)}"
-                            f"{' (max ' + str(max_workers) + ')' if max_workers else ''}", C.emphasis)
+                    if not stopping and not at_cap:
+                        spawn_worker()
                 except Exception:
-                    pass  # queue.Empty on timeout — just loop
+                    pass  # queue.Empty on timeout
+
+                # Proactive probe: spawn a worker periodically to check for new work
+                if not stopping and not at_cap and time.time() - last_spawn >= PROBE_INTERVAL:
+                    spawn_worker()
         except KeyboardInterrupt:
             stopping = True
             log("Graceful stop — waiting for workers to finish current tasks. (ctrl+c again to force kill)", C.warning)
