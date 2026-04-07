@@ -2,8 +2,17 @@
   "name": "fntypescript",
   "version": "0.1.0",
   "description": "TypeScript Language Service plugin framework",
+  "license": "MIT",
+  "homepage": "https://github.com/fnrhombus/fntypescript",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fnrhombus/fntypescript.git",
+    "directory": "packages/fntypescript"
+  },
+  "keywords": ["typescript", "language-service", "plugin", "tsserver", "editor", "tooling"],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": ["dist", "LICENSE"],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -14,16 +23,6 @@
       "types": "./dist/define-plugin.d.ts",
       "import": "./dist/define-plugin.js",
       "require": "./dist/define-plugin.js"
-    },
-    "./proxy.js": {
-      "types": "./dist/proxy.d.ts",
-      "import": "./dist/proxy.js",
-      "require": "./dist/proxy.js"
-    },
-    "./loader.js": {
-      "types": "./dist/loader.d.ts",
-      "import": "./dist/loader.js",
-      "require": "./dist/loader.js"
     },
     "./types.js": {
       "types": "./dist/types.d.ts"

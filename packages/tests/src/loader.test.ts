@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import type ts from "typescript/lib/tsserverlibrary";
 import { definePlugin } from "fntypescript/define-plugin.js";
-import { loadSubPlugins } from "fntypescript/loader.js";
+import { loadSubPlugins } from "../../fntypescript/dist/loader.js";
 
 function makeMockLogger() {
   return {
