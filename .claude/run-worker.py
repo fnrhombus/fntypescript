@@ -904,29 +904,40 @@ def handle_sigint(signum, frame):
     log("Graceful stop requested — finishing current task, then exiting. (ctrl+c again to force kill)", C.warning)
 
 
+def _signal_scale_up():
+    if _scale_queue:
+        _scale_queue.put("scale_up")
+
+
 def run_cycle():
     """Run one dispatch cycle. Returns True if work was done, False if idle."""
 
     # Priority 1: PRs needing review
     pr = find_pr_needing_review()
     if pr:
+        _signal_scale_up()
         run_pr_review(pr)
         return True
 
     # Priority 2: Rejected PRs needing fixes
     pr = find_rejected_pr()
     if pr:
+        _signal_scale_up()
         run_pr_fix(pr)
         return True
 
     # Priority 3: Ready tasks
     task = find_ready_task()
     if task:
+        _signal_scale_up()
         run_new_task(task)
         return True
 
     # Priority 4: Triage
     return run_triage()
+
+
+_scale_queue = None  # set by worker_loop for run_cycle to signal
 
 
 def worker_loop(max_iters, scale_queue=None):
@@ -935,6 +946,8 @@ def worker_loop(max_iters, scale_queue=None):
     If scale_queue is provided (auto-scale mode), sends a message each time
     work is found so the parent can spawn additional workers.
     """
+    global _scale_queue
+    _scale_queue = scale_queue
     swatch = f"{C.emphasis}██{C.success}██{C.warning}██{C.tool}██{C.info}██{C.dim}██{RESET}"
     log(f"Starting {swatch}{' (' + str(max_iters) + ' iterations)' if max_iters else ''}", C.emphasis)
     cleanup_worktrees()
@@ -956,8 +969,6 @@ def worker_loop(max_iters, scale_queue=None):
 
         if work_done:
             log("Work done. Restarting immediately.", C.success)
-            if scale_queue:
-                scale_queue.put("scale_up")
         else:
             log("No work available and triage found nothing to create. Exiting.", C.warning)
             break
@@ -1012,6 +1023,7 @@ def main():
         processes = []
 
         # Start first worker
+        stopping = False
         p = multiprocessing.Process(target=run_worker_process, args=(args, scale_queue))
         p.start()
         processes.append(p)
@@ -1027,6 +1039,8 @@ def main():
                 # Check for scale-up signals (non-blocking)
                 try:
                     scale_queue.get(timeout=1)
+                    if stopping:
+                        continue  # don't spawn new workers after ctrl+c
                     at_cap = max_workers and len(processes) >= max_workers
                     if not at_cap:
                         p = multiprocessing.Process(target=run_worker_process, args=(args, scale_queue))
@@ -1037,10 +1051,16 @@ def main():
                 except Exception:
                     pass  # queue.Empty on timeout — just loop
         except KeyboardInterrupt:
-            for p in processes:
-                p.join(timeout=10)
-                if p.is_alive():
-                    p.terminate()
+            stopping = True
+            log("Graceful stop — waiting for workers to finish current tasks. (ctrl+c again to force kill)", C.warning)
+            try:
+                for p in processes:
+                    p.join()
+            except KeyboardInterrupt:
+                log("Force killing all workers.", C.error)
+                for p in processes:
+                    if p.is_alive():
+                        p.terminate()
 
     elif args.workers > 1:
         WORKER_ID = "supervisor"
@@ -1056,10 +1076,15 @@ def main():
             for p in processes:
                 p.join()
         except KeyboardInterrupt:
-            for p in processes:
-                p.join(timeout=10)
-                if p.is_alive():
-                    p.terminate()
+            log("Graceful stop — waiting for workers to finish current tasks. (ctrl+c again to force kill)", C.warning)
+            try:
+                for p in processes:
+                    p.join()
+            except KeyboardInterrupt:
+                log("Force killing all workers.", C.error)
+                for p in processes:
+                    if p.is_alive():
+                        p.terminate()
     else:
         signal.signal(signal.SIGINT, handle_sigint)
         worker_loop(args.iterations)
