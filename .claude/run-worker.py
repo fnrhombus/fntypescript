@@ -225,10 +225,10 @@ def get_codebase_context():
 # ── Priority 0: Merge approved PRs ─────────────────────────────────
 
 def find_mergeable_pr():
-    """Find an open PR where CI passed and fnnitpick approved."""
+    """Find an open PR where fnnitpick approved and auto-merge is not already enabled."""
     result = subprocess.run(
         ["gh", "pr", "list", "--repo", REPO, "--state", "open",
-         "--json", "number,title,reviews,statusCheckRollup"],
+         "--json", "number,title,reviews,autoMergeRequest"],
         capture_output=True, text=True, timeout=30
     )
     if result.returncode != 0 or not result.stdout.strip():
@@ -236,6 +236,10 @@ def find_mergeable_pr():
 
     prs = json.loads(result.stdout)
     for pr in prs:
+        # Skip if auto-merge already enabled
+        if pr.get("autoMergeRequest"):
+            continue
+
         reviews = pr.get("reviews", [])
         qa_reviews = [r for r in reviews
                       if r.get("author", {}).get("login") == "fnnitpick"]
@@ -245,31 +249,22 @@ def find_mergeable_pr():
         if latest.get("state") != "APPROVED":
             continue
 
-        # Check CI passed
-        checks = pr.get("statusCheckRollup", [])
-        ci_passed = any(
-            c.get("name", "").startswith("build-and-test") and c.get("conclusion") == "SUCCESS"
-            for c in checks
-        )
-        if not ci_passed:
-            continue
-
         return {"number": pr["number"], "title": pr["title"]}
 
     return None
 
 
 def merge_pr(pr):
-    """Merge an approved PR."""
+    """Merge an approved PR. Uses --auto to queue merge when checks pass."""
     pr_num = pr["number"]
     log(f"Merging PR #{pr_num}: {pr['title']}", C.success)
     result = subprocess.run(
         ["gh", "pr", "merge", str(pr_num), "--repo", REPO,
-         "--squash", "--delete-branch"],
+         "--squash", "--delete-branch", "--auto"],
         capture_output=True, text=True, timeout=60
     )
     if result.returncode == 0:
-        log(f"PR #{pr_num} merged successfully", C.success)
+        log(f"PR #{pr_num} auto-merge enabled", C.success)
     else:
         log(f"Failed to merge PR #{pr_num}: {result.stderr.strip()}", C.error)
     return True
@@ -734,6 +729,9 @@ def run_triage():
 
 # ── Agent spawning ──────────────────────────────────────────────────
 
+AGENT_NAMES = {"code": "fn10x", "qa": "fnnitpick", "plan": "fnplanner", "research": "fnlmgtfy"}
+
+
 def spawn_agent(agent_type, prompt):
     """Spawn a claude agent and wait for it to complete. Returns True."""
     cmd = [
@@ -761,8 +759,9 @@ def spawn_agent(agent_type, prompt):
     proc.stdin.flush()
 
     proc.stdin.close()
+    agent_name = AGENT_NAMES.get(agent_type, agent_type)
     done_event = threading.Event()
-    out_thread = threading.Thread(target=output_reader, args=(proc, done_event), daemon=True)
+    out_thread = threading.Thread(target=output_reader, args=(proc, done_event, agent_name), daemon=True)
     out_thread.start()
 
     done_event.wait(timeout=600)
@@ -1072,8 +1071,13 @@ def truncate(s, n=200):
     return s[:n] + "…" if len(s) > n else s
 
 
-def output_reader(proc, done_event):
-    g = f"{C.dim}│{RESET} "  # gutter prefix for all agent output
+def output_reader(proc, done_event, agent_name="agent"):
+    prefix = f"{WORKER_ID}({agent_name})"
+
+    def alog(msg, color=None):
+        if color is None:
+            color = C.info
+        print(f"{color}{ts()} [{prefix}] {msg}{RESET}")
 
     for line in proc.stdout:
         line = line.strip()
@@ -1083,7 +1087,7 @@ def output_reader(proc, done_event):
             msg = json.loads(line)
         except json.JSONDecodeError:
             if VERBOSE:
-                print(f"{g}{line}")
+                alog(line, C.dim)
             continue
 
         t = msg.get("type", "")
@@ -1091,7 +1095,7 @@ def output_reader(proc, done_event):
         if t == "system" and msg.get("subtype") == "init":
             if VERBOSE:
                 model = msg.get("model", "?")
-                print(f"{g}{C.dim}── session: {msg.get('session_id', '?')[:8]}… model: {model} ──{RESET}")
+                alog(f"session: {msg.get('session_id', '?')[:8]}… model: {model}", C.dim)
 
         elif t == "assistant":
             content = msg.get("message", {}).get("content", [])
@@ -1099,18 +1103,18 @@ def output_reader(proc, done_event):
                 if block.get("type") == "text":
                     if VERBOSE:
                         for text_line in block["text"].strip().split("\n"):
-                            print(f"{g}{C.emphasis}{text_line}{RESET}")
+                            alog(text_line, C.emphasis)
                     else:
                         for para in block["text"].strip().split("\n"):
                             para = para.strip()
                             if para:
-                                print(f"{g}{C.info}{para}{RESET}")
+                                alog(para)
                                 break
                 elif block.get("type") == "tool_use" and VERBOSE:
                     name = block.get("name", "?")
                     inp = block.get("input", {})
                     desc = format_tool_input(name, inp)
-                    print(f"{g}{C.tool}▶ {name}{RESET} {C.dim}{truncate(desc)}{RESET}")
+                    alog(f"▶ {name} {C.dim}{truncate(desc)}", C.tool)
 
         elif t == "user":
             if VERBOSE:
