@@ -275,6 +275,7 @@ def merge_pr(pr):
     return True
 
 
+
 # ── Priority 1: PRs needing review ─────────────────────────────────
 
 def find_pr_needing_review():
@@ -358,10 +359,10 @@ def run_pr_review(pr):
 # ── Priority 2: Rejected PRs ───────────────────────────────────────
 
 def find_rejected_pr():
-    """Find and claim an open PR where fnnitpick requested changes or CI failed."""
+    """Find and claim an open PR that needs fixing (QA rejected, CI failed, or merge conflicts)."""
     result = subprocess.run(
         ["gh", "pr", "list", "--repo", REPO, "--state", "open",
-         "--json", "number,title,reviews,headRefName,statusCheckRollup"],
+         "--json", "number,title,reviews,headRefName,statusCheckRollup,mergeable"],
         capture_output=True, text=True, timeout=30
     )
     if result.returncode != 0 or not result.stdout.strip():
@@ -383,7 +384,7 @@ def find_rejected_pr():
                 needs_fix = True
                 review_body = latest.get("body", "")
 
-        # Check 2: CI failed (regardless of review state)
+        # Check 2: CI failed
         if not needs_fix:
             checks = pr.get("statusCheckRollup", [])
             ci_failed = any(
@@ -393,6 +394,15 @@ def find_rejected_pr():
             if ci_failed:
                 needs_fix = True
                 review_body = "CI build/test failed. Check the CI logs and fix the issues."
+
+        # Check 3: Merge conflicts with main
+        if not needs_fix:
+            if pr.get("mergeable") == "CONFLICTING":
+                needs_fix = True
+                review_body = (
+                    "This PR has merge conflicts with main. "
+                    "Rebase onto main and resolve all conflicts, then push."
+                )
 
         if not needs_fix:
             continue
@@ -825,6 +835,12 @@ def release_stale_claims(issue_num):
             if age > CLAIM_STALE_THRESHOLD:
                 log(f"Releasing stale claim from {worker} on #{issue_num} ({int(age)}s old)", C.warning)
                 gh_comment(issue_num, f"RELEASE {worker} — stale claim auto-released by {WORKER_ID}")
+                # Re-add agent label so the task returns to the pool
+                subprocess.run(
+                    ["gh", "issue", "edit", str(issue_num), "--add-label", "agent:fn10x",
+                     "--repo", REPO],
+                    capture_output=True, text=True, timeout=30
+                )
         except (ValueError, OSError):
             pass
 
@@ -879,6 +895,40 @@ def is_blocked(issue_num):
             return True
 
     return False
+
+
+# ── Orphan cleanup ─────────────────────────────────────────────────
+
+def cleanup_orphaned_claims():
+    """Find open issues with no agent label and no open PR, then release stale claims."""
+    result = subprocess.run(
+        ["gh", "issue", "list", "--repo", REPO, "--state", "open",
+         "--json", "number,labels", "--jq",
+         '.[] | select(.labels | map(.name) | any(startswith("agent:")) | not) | .number'],
+        capture_output=True, text=True, timeout=30
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return
+
+    # Get open PR branches to check if issues already have PRs in flight
+    pr_result = subprocess.run(
+        ["gh", "pr", "list", "--repo", REPO, "--state", "open",
+         "--json", "body", "--jq", ".[].body"],
+        capture_output=True, text=True, timeout=30
+    )
+    pr_bodies = pr_result.stdout if pr_result.returncode == 0 else ""
+
+    for line in result.stdout.strip().split("\n"):
+        try:
+            issue_num = int(line.strip())
+        except ValueError:
+            continue
+        # Skip if an open PR references this issue
+        if f"#{issue_num}" in pr_bodies:
+            if VERBOSE:
+                log(f"#{issue_num} has an open PR, skipping orphan check", C.dim, quiet_ok=True)
+            continue
+        release_stale_claims(issue_num)
 
 
 # ── Worktree helpers ───────────────────────────────────────────────
@@ -968,6 +1018,10 @@ def cleanup_worktrees():
             subprocess.run(["git", "branch", "-D", branch],
                            capture_output=True, text=True, timeout=30)
 
+    # Collect branches that are checked out in worktrees (never delete these)
+    worktree_branches = {wt.get("branch", "") for wt in stale}
+    worktree_branches.add("main")
+
     # Clean up old worker-named branches (legacy: {name}/issue-{N})
     result = subprocess.run(
         ["git", "branch", "--format", "%(refname:short)"],
@@ -976,7 +1030,7 @@ def cleanup_worktrees():
     if result.returncode == 0:
         for branch in result.stdout.strip().split("\n"):
             branch = branch.strip()
-            if not branch or branch == "main":
+            if not branch or branch in worktree_branches:
                 continue
             # Only delete legacy worker-named branches (e.g. james/issue-28)
             # Keep feat/issue-N branches — those are active feature worktrees
@@ -1178,6 +1232,7 @@ def run_worker_process(args_ns, color_index, scale_queue=None):
         sys.exit(0)
 
     cleanup_worktrees()
+    cleanup_orphaned_claims()
     work_done = run_cycle()
     log("Cycle complete." if work_done else "No work found.", C.dim, quiet_ok=True)
     sys.exit(0 if work_done else EXIT_NO_WORK)
@@ -1206,8 +1261,11 @@ def main():
 
     def keyboard_listener():
         import tty, termios
-        fd = sys.stdin.fileno()
-        old = termios.tcgetattr(fd)
+        try:
+            fd = sys.stdin.fileno()
+            old = termios.tcgetattr(fd)
+        except (termios.error, OSError, ValueError):
+            return  # not a terminal
         try:
             tty.setcbreak(fd)
             while True:
