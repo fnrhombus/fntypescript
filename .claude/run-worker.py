@@ -22,6 +22,7 @@ import time
 import random
 import re
 import argparse
+import colorsys
 
 # Human-readable worker names (top 100 US names, SSA + Census data)
 WORKER_NAMES = [
@@ -37,15 +38,64 @@ WORKER_NAMES = [
     "joyce", "juan", "judith", "julia", "julie", "justin", "karen", "katherine", "keith", "kelly",
 ]
 
-# ANSI colors
-DIM = "\033[2m"
 RESET = "\033[0m"
-BOLD = "\033[1m"
-CYAN = "\033[36m"
-GREEN = "\033[32m"
-YELLOW = "\033[33m"
-RED = "\033[31m"
-MAGENTA = "\033[35m"
+
+
+def _hsl(h, s, l):
+    """HSL to 24-bit ANSI. h: 0-360, s/l: 0-100."""
+    r, g, b = colorsys.hls_to_rgb(h / 360, l / 100, s / 100)
+    return f"\033[38;2;{int(r * 255)};{int(g * 255)};{int(b * 255)}m"
+
+
+class WorkerColors:
+    """Per-worker color palette. Hue is locked; saturation/lightness vary by message type."""
+
+    def __init__(self, worker_num):
+        # Golden angle distribution for max hue separation between workers
+        self.hue = (worker_num * 137.508) % 360
+
+    def _c(self, s, l):
+        return _hsl(self.hue, s, l)
+
+    @property
+    def success(self):    return self._c(80, 72)   # vivid, bright — claimed, work done
+
+    @property
+    def warning(self):    return self._c(55, 62)   # desaturated, mid — lost claim, blocked
+
+    @property
+    def error(self):      return self._c(90, 58)   # intense, slightly darker — failures
+
+    @property
+    def info(self):       return self._c(20, 55)   # very muted but hue visible — default
+
+    @property
+    def emphasis(self):   return self._c(70, 78)   # vivid, light — starting, headings
+
+    @property
+    def tool(self):       return self._c(45, 67)   # moderate — tool calls
+
+    @property
+    def tool_ok(self):    return self._c(50, 70)   # tool success ✓
+
+    @property
+    def dim(self):        return self._c(12, 50)   # barely tinted — session info, done line
+
+    @property
+    def triage(self):     return self._c(65, 68)   # distinct from success — triage activity
+
+
+class SupervisorColors:
+    """White-only palette for orchestration output."""
+    success   = "\033[97m"
+    warning   = "\033[97m"
+    error     = "\033[91m"
+    info      = "\033[37m"
+    emphasis  = "\033[1;97m"
+    tool      = "\033[37m"
+    tool_ok   = "\033[37m"
+    dim       = "\033[2;37m"
+    triage    = "\033[37m"
 
 LOCK_FILE = "/tmp/fntypescript-worker.lock"
 WORKTREE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "worktrees")
@@ -57,6 +107,7 @@ IDLE_SLEEP = 180
 
 _worker_num = random.randint(10000, 99999)
 WORKER_ID = f"{WORKER_NAMES[_worker_num % len(WORKER_NAMES)]}-{_worker_num}"
+C = WorkerColors(_worker_num)
 
 VERBOSE = False
 INTERACTIVE = False
@@ -70,7 +121,9 @@ def ts():
     return time.strftime("%H:%M:%S")
 
 
-def log(msg, color=DIM):
+def log(msg, color=None):
+    if color is None:
+        color = C.info
     print(f"{color}{ts()} [{WORKER_ID}] {msg}{RESET}")
 
 
@@ -155,7 +208,7 @@ def find_pr_needing_review():
 def run_pr_review(pr):
     """Spawn fnnitpick to review a PR."""
     pr_num = pr["number"]
-    log(f"Reviewing PR #{pr_num}: {pr['title']}", GREEN)
+    log(f"Reviewing PR #{pr_num}: {pr['title']}", C.success)
 
     # Get the linked issue number from the PR body
     pr_body = subprocess.run(
@@ -223,7 +276,7 @@ def find_rejected_pr():
 def run_pr_fix(pr):
     """Spawn fn10x to fix a rejected PR."""
     pr_num = pr["number"]
-    log(f"Fixing rejected PR #{pr_num}: {pr['title']}", YELLOW)
+    log(f"Fixing rejected PR #{pr_num}: {pr['title']}", C.warning)
 
     # Create worktree from the PR branch
     worktree_path = os.path.join(WORKTREE_DIR, f"{WORKER_ID}-pr-{pr_num}")
@@ -241,7 +294,7 @@ def run_pr_fix(pr):
     if wt_result.returncode == 0:
         worktree_info = f"Work in this directory: {worktree_path} (branch: {branch}). "
     else:
-        log(f"Worktree failed: {wt_result.stderr.strip()}", YELLOW)
+        log(f"Worktree failed: {wt_result.stderr.strip()}", C.warning)
 
     # Get linked issue spec
     pr_body = subprocess.run(
@@ -329,7 +382,7 @@ def find_ready_task():
             time.sleep(3)
 
             if not check_claim_won(issue_num):
-                log(f"Lost claim on #{issue_num}", YELLOW)
+                log(f"Lost claim on #{issue_num}", C.warning)
                 continue
 
             label_check = subprocess.run(
@@ -339,7 +392,7 @@ def find_ready_task():
                 capture_output=True, text=True, timeout=30
             )
             if label_check.stdout.strip() != "true":
-                log(f"#{issue_num} label already removed, skipping...", YELLOW)
+                log(f"#{issue_num} label already removed, skipping...", C.warning)
                 continue
 
             subprocess.run(
@@ -348,13 +401,13 @@ def find_ready_task():
                 capture_output=True, text=True, timeout=30
             )
 
-            log(f"Claimed #{issue_num}: {chosen.get('title', '?')}", GREEN)
+            log(f"Claimed #{issue_num}: {chosen.get('title', '?')}", C.success)
             return chosen
 
         return None
 
     except Exception as e:
-        log(f"Error claiming task: {e}", RED)
+        log(f"Error claiming task: {e}", C.error)
         return None
     finally:
         fcntl.flock(lock_fd, fcntl.LOCK_UN)
@@ -380,7 +433,7 @@ def run_new_task(task):
     if wt_result.returncode == 0:
         worktree_info = f"Work in this directory: {worktree_path} (branch: {worktree_branch}). "
     else:
-        log(f"Worktree failed: {wt_result.stderr.strip()}", YELLOW)
+        log(f"Worktree failed: {wt_result.stderr.strip()}", C.warning)
 
     # Read issue spec
     issue = subprocess.run(
@@ -415,7 +468,7 @@ def run_new_task(task):
             capture_output=True, text=True, timeout=30
         )
         gh_comment(issue_num, f"RELEASE {WORKER_ID} — graceful stop requested, re-added agent:fn10x")
-        log(f"#{issue_num} released back to pool", YELLOW)
+        log(f"#{issue_num} released back to pool", C.warning)
     else:
         gh_comment(issue_num, f"RELEASE {WORKER_ID} — work complete")
 
@@ -443,7 +496,7 @@ def run_triage():
         return False
 
     try:
-        log("No work available — running triage...", MAGENTA)
+        log("No work available — running triage...", C.triage)
 
         # Snapshot task list before triage so we can detect genuinely new work
         before = subprocess.run(
@@ -475,12 +528,12 @@ def run_triage():
 
         if new_ids:
             id_list = ", ".join(f"#{n}" for n in sorted(new_ids))
-            log(f"Triage created {len(new_ids)} task(s): {id_list}", GREEN)
+            log(f"Triage created {len(new_ids)} task(s): {id_list}", C.success)
             if os.path.exists(TRIAGE_COOLDOWN_FILE):
                 os.remove(TRIAGE_COOLDOWN_FILE)
             return True
         else:
-            log(f"Triage ran but no new tasks. Cooldown {TRIAGE_COOLDOWN}s.", DIM)
+            log(f"Triage ran but no new tasks. Cooldown {TRIAGE_COOLDOWN}s.", C.dim)
             open(TRIAGE_COOLDOWN_FILE, "w").close()
             return False
     finally:
@@ -553,7 +606,7 @@ def heartbeat_loop(issue_num, stop_event):
             break
         gh_comment(issue_num, f"HEARTBEAT {WORKER_ID}")
         if VERBOSE:
-            log(f"Heartbeat posted on #{issue_num}", DIM)
+            log(f"Heartbeat posted on #{issue_num}", C.dim)
 
 
 def release_stale_claims(issue_num):
@@ -595,7 +648,7 @@ def release_stale_claims(issue_num):
             last_seen = datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
             age = now - last_seen
             if age > CLAIM_STALE_THRESHOLD:
-                log(f"Releasing stale claim from {worker} on #{issue_num} ({int(age)}s old)", YELLOW)
+                log(f"Releasing stale claim from {worker} on #{issue_num} ({int(age)}s old)", C.warning)
                 gh_comment(issue_num, f"RELEASE {worker} — stale claim auto-released by {WORKER_ID}")
         except (ValueError, OSError):
             pass
@@ -647,7 +700,7 @@ def is_blocked(issue_num):
             capture_output=True, text=True, timeout=30
         )
         if check.returncode == 0 and check.stdout.strip() == "OPEN":
-            log(f"#{issue_num} blocked on #{ref} (still open)", YELLOW)
+            log(f"#{issue_num} blocked on #{ref} (still open)", C.warning)
             return True
 
     return False
@@ -694,7 +747,7 @@ def cleanup_worktrees():
                 log(f"Worktree in use, skipping: {path}")
             continue
 
-        log(f"Cleaning stale worktree: {path} ({branch})", DIM)
+        log(f"Cleaning stale worktree: {path} ({branch})", C.dim)
         subprocess.run(["git", "worktree", "remove", "--force", path],
                        capture_output=True, text=True, timeout=30)
         if branch and branch != "main":
@@ -763,25 +816,25 @@ def output_reader(proc, done_event):
         if t == "system" and msg.get("subtype") == "init":
             if VERBOSE:
                 model = msg.get("model", "?")
-                print(f"{DIM}── session: {msg.get('session_id', '?')[:8]}… model: {model} ──{RESET}")
+                print(f"{C.dim}── session: {msg.get('session_id', '?')[:8]}… model: {model} ──{RESET}")
 
         elif t == "assistant":
             content = msg.get("message", {}).get("content", [])
             for block in content:
                 if block.get("type") == "text":
                     if VERBOSE:
-                        print(f"{BOLD}{block['text']}{RESET}")
+                        print(f"{C.emphasis}{block['text']}{RESET}")
                     else:
                         for para in block["text"].strip().split("\n"):
                             para = para.strip()
                             if para:
-                                print(f"{DIM}{ts()} [{WORKER_ID}] {para}{RESET}")
+                                print(f"{C.info}{ts()} [{WORKER_ID}] {para}{RESET}")
                                 break
                 elif block.get("type") == "tool_use" and VERBOSE:
                     name = block.get("name", "?")
                     inp = block.get("input", {})
                     desc = format_tool_input(name, inp)
-                    print(f"  {CYAN}▶ {name}{RESET} {DIM}{truncate(desc)}{RESET}")
+                    print(f"  {C.tool}▶ {name}{RESET} {C.dim}{truncate(desc)}{RESET}")
 
         elif t == "user":
             if VERBOSE:
@@ -795,17 +848,17 @@ def output_reader(proc, done_event):
                 if content and isinstance(content[0], dict):
                     is_error = is_error or content[0].get("is_error", False)
                 if stderr and not stdout:
-                    print(f"  {RED}✗ {truncate(stderr)}{RESET}")
+                    print(f"  {C.error}✗ {truncate(stderr)}{RESET}")
                 elif is_error:
-                    print(f"  {RED}✗ {truncate(stdout or stderr)}{RESET}")
+                    print(f"  {C.error}✗ {truncate(stdout or stderr)}{RESET}")
                 elif stdout:
-                    print(f"  {GREEN}✓ {truncate(stdout)}{RESET}")
+                    print(f"  {C.tool_ok}✓ {truncate(stdout)}{RESET}")
 
         elif t == "result":
             cost = msg.get("total_cost_usd", 0)
             dur = msg.get("duration_ms", 0) / 1000
             turns = msg.get("num_turns", 0)
-            print(f"{DIM}{ts()} ── done: {turns} turns, {dur:.1f}s, ${cost:.4f} ──{RESET}")
+            print(f"{C.dim}{ts()} ── done: {turns} turns, {dur:.1f}s, ${cost:.4f} ──{RESET}")
             done_event.set()
 
     sys.stdout.flush()
@@ -845,10 +898,10 @@ def input_sender(proc, done_event):
 def handle_sigint(signum, frame):
     global STOP_REQUESTED
     if STOP_REQUESTED:
-        print(f"\n{RED}[{WORKER_ID}] Force killed.{RESET}")
+        print(f"\n{C.error}[{WORKER_ID}] Force killed.{RESET}")
         sys.exit(1)
     STOP_REQUESTED = True
-    log("Graceful stop requested — finishing current task, then exiting. (ctrl+c again to force kill)", YELLOW)
+    log("Graceful stop requested — finishing current task, then exiting. (ctrl+c again to force kill)", C.warning)
 
 
 def run_cycle():
@@ -882,18 +935,19 @@ def worker_loop(max_iters, scale_queue=None):
     If scale_queue is provided (auto-scale mode), sends a message each time
     work is found so the parent can spawn additional workers.
     """
-    log(f"Starting{' (' + str(max_iters) + ' iterations)' if max_iters else ''}", BOLD)
+    swatch = f"{C.emphasis}██{C.success}██{C.warning}██{C.tool}██{C.info}██{C.dim}██{RESET}"
+    log(f"Starting {swatch}{' (' + str(max_iters) + ' iterations)' if max_iters else ''}", C.emphasis)
     cleanup_worktrees()
 
     iteration = 0
     while max_iters == 0 or iteration < max_iters:
         if STOP_REQUESTED:
-            log("Stop requested, not picking up new work.", YELLOW)
+            log("Stop requested, not picking up new work.", C.warning)
             break
 
         iteration += 1
         if VERBOSE:
-            print(f"\n{YELLOW}=== Cycle {iteration}{('/' + str(max_iters)) if max_iters else ''} ==={RESET}")
+            print(f"\n{C.warning}=== Cycle {iteration}{('/' + str(max_iters)) if max_iters else ''} ==={RESET}")
 
         work_done = run_cycle()
 
@@ -901,24 +955,25 @@ def worker_loop(max_iters, scale_queue=None):
             break
 
         if work_done:
-            log("Work done. Restarting immediately.", GREEN)
+            log("Work done. Restarting immediately.", C.success)
             if scale_queue:
                 scale_queue.put("scale_up")
         else:
-            log("No work available and triage found nothing to create. Exiting.", YELLOW)
+            log("No work available and triage found nothing to create. Exiting.", C.warning)
             break
 
-    log(f"Done ({iteration} iterations).", DIM)
+    log(f"Done ({iteration} iterations).", C.dim)
 
 
 def run_worker_process(args_ns, scale_queue=None):
     """Entry point for each worker subprocess."""
-    global VERBOSE, INTERACTIVE, WORKER_ID
+    global VERBOSE, INTERACTIVE, WORKER_ID, C
     VERBOSE = args_ns.verbose
     INTERACTIVE = args_ns.interactive
-    # Each subprocess gets its own unique ID
+    # Each subprocess gets its own unique ID and color palette
     _num = random.randint(10000, 99999)
     WORKER_ID = f"{WORKER_NAMES[_num % len(WORKER_NAMES)]}-{_num}"
+    C = WorkerColors(_num)
     signal.signal(signal.SIGINT, handle_sigint)
     worker_loop(args_ns.iterations, scale_queue)
 
@@ -944,13 +999,14 @@ def main():
     INTERACTIVE = args.interactive
 
     if args.interactive and (args.workers > 1 or args.auto_scale):
-        print(f"{RED}Error: --interactive is not compatible with multiple workers{RESET}")
+        print(f"\033[91mError: --interactive is not compatible with multiple workers{RESET}")
         sys.exit(1)
 
     if args.auto_scale:
-        global WORKER_ID
+        global WORKER_ID, C
         import multiprocessing
         WORKER_ID = "supervisor"
+        C = SupervisorColors()
         scale_queue = multiprocessing.Queue()
         max_workers = args.workers if args.workers > 1 else 0  # 0 = unlimited
         processes = []
@@ -959,7 +1015,7 @@ def main():
         p = multiprocessing.Process(target=run_worker_process, args=(args, scale_queue))
         p.start()
         processes.append(p)
-        log(f"Auto-scale: started worker 1{' (max ' + str(max_workers) + ')' if max_workers else ''}", BOLD)
+        log(f"Auto-scale: started worker 1{' (max ' + str(max_workers) + ')' if max_workers else ''}", C.emphasis)
 
         try:
             while True:
@@ -977,7 +1033,7 @@ def main():
                         p.start()
                         processes.append(p)
                         log(f"Auto-scale: started worker {len(processes)}"
-                            f"{' (max ' + str(max_workers) + ')' if max_workers else ''}", BOLD)
+                            f"{' (max ' + str(max_workers) + ')' if max_workers else ''}", C.emphasis)
                 except Exception:
                     pass  # queue.Empty on timeout — just loop
         except KeyboardInterrupt:
@@ -987,6 +1043,8 @@ def main():
                     p.terminate()
 
     elif args.workers > 1:
+        WORKER_ID = "supervisor"
+        C = SupervisorColors()
         import multiprocessing
         processes = []
         for _ in range(args.workers):
