@@ -420,23 +420,29 @@ def run_pr_fix(pr):
     pr_num = pr["number"]
     log(f"Fixing rejected PR #{pr_num}: {pr['title']}", C.warning)
 
-    # Create worktree from the PR branch
-    worktree_path = os.path.join(WORKTREE_DIR, f"{WORKER_ID}-pr-{pr_num}")
+    # Create or reuse feature-named worktree from the PR branch
+    worktree_path = os.path.join(WORKTREE_DIR, f"pr-{pr_num}")
     branch = pr["branch"]
 
     os.makedirs(WORKTREE_DIR, exist_ok=True)
-    # Fetch the branch first
-    subprocess.run(["git", "fetch", "origin", branch],
-                   capture_output=True, text=True, timeout=30)
-    wt_result = subprocess.run(
-        ["git", "worktree", "add", worktree_path, f"origin/{branch}"],
-        capture_output=True, text=True, timeout=30
-    )
     worktree_info = ""
-    if wt_result.returncode == 0:
-        worktree_info = f"Work in this directory: {worktree_path} (branch: {branch}). "
+    if os.path.isdir(worktree_path):
+        log(f"Reusing existing worktree for PR #{pr_num}", C.info, quiet_ok=True)
+        # Pull latest changes in case a previous worker pushed
+        subprocess.run(["git", "-C", worktree_path, "pull", "--ff-only"],
+                       capture_output=True, text=True, timeout=30)
+        worktree_info = f"Work in this directory: {worktree_path} (branch: {branch}). Previous work may exist — check git status and continue from where it left off. "
     else:
-        log(f"Worktree failed: {wt_result.stderr.strip()}", C.warning)
+        subprocess.run(["git", "fetch", "origin", branch],
+                       capture_output=True, text=True, timeout=30)
+        wt_result = subprocess.run(
+            ["git", "worktree", "add", worktree_path, f"origin/{branch}"],
+            capture_output=True, text=True, timeout=30
+        )
+        if wt_result.returncode == 0:
+            worktree_info = f"Work in this directory: {worktree_path} (branch: {branch}). "
+        else:
+            log(f"Worktree failed: {wt_result.stderr.strip()}", C.warning)
 
     # Get linked issue spec
     pr_body = subprocess.run(
@@ -578,20 +584,25 @@ def run_new_task(task):
 
     update_board_status(issue_num, "in_progress")
 
-    # Create worktree
-    worktree_branch = f"{WORKER_ID}/issue-{issue_num}"
-    worktree_path = os.path.join(WORKTREE_DIR, f"{WORKER_ID}-issue-{issue_num}")
+    # Create or reuse feature-named worktree
+    worktree_branch = f"feat/issue-{issue_num}"
+    worktree_path = os.path.join(WORKTREE_DIR, f"issue-{issue_num}")
     worktree_info = ""
 
     os.makedirs(WORKTREE_DIR, exist_ok=True)
-    wt_result = subprocess.run(
-        ["git", "worktree", "add", worktree_path, "-b", worktree_branch],
-        capture_output=True, text=True, timeout=30
-    )
-    if wt_result.returncode == 0:
-        worktree_info = f"Work in this directory: {worktree_path} (branch: {worktree_branch}). "
+    if os.path.isdir(worktree_path):
+        # Reuse existing worktree — previous worker's progress is preserved
+        log(f"Reusing existing worktree for #{issue_num}", C.info, quiet_ok=True)
+        worktree_info = f"Work in this directory: {worktree_path} (branch: {worktree_branch}). Previous work may exist — check git status and continue from where it left off. "
     else:
-        log(f"Worktree failed: {wt_result.stderr.strip()}", C.warning)
+        wt_result = subprocess.run(
+            ["git", "worktree", "add", worktree_path, "-b", worktree_branch],
+            capture_output=True, text=True, timeout=30
+        )
+        if wt_result.returncode == 0:
+            worktree_info = f"Work in this directory: {worktree_path} (branch: {worktree_branch}). "
+        else:
+            log(f"Worktree failed: {wt_result.stderr.strip()}", C.warning)
 
     # Read issue spec
     issue = subprocess.run(
@@ -900,13 +911,11 @@ def cleanup_worktrees():
                     stale.append(current)
             current = {}
 
-    # Only clean worktrees that aren't owned by a currently running worker.
-    # Check if the worktree's lock file exists (git creates .lock while in use).
     for wt in stale:
         path = wt["path"]
         branch = wt.get("branch", "")
 
-        # Skip worktrees with active processes (check if any claude process has this path as cwd)
+        # Skip worktrees with active processes
         ps_check = subprocess.run(
             ["fuser", path, "-s"], capture_output=True, timeout=10
         )
@@ -915,6 +924,20 @@ def cleanup_worktrees():
                 log(f"Worktree in use, skipping: {path}")
             continue
 
+        # Extract issue/PR number from worktree path to check if still needed
+        m = re.search(r'(?:issue|pr)-(\d+)$', os.path.basename(path))
+        if m:
+            num = m.group(1)
+            # Don't clean worktrees for open issues/PRs — work may resume
+            state_check = subprocess.run(
+                ["gh", "issue", "view", num, "--repo", REPO, "--json", "state", "--jq", ".state"],
+                capture_output=True, text=True, timeout=30
+            )
+            if state_check.returncode == 0 and state_check.stdout.strip() == "OPEN":
+                if VERBOSE:
+                    log(f"Worktree for open #{num}, keeping: {path}", quiet_ok=True)
+                continue
+
         log(f"Cleaning stale worktree: {path} ({branch})", C.dim, quiet_ok=True)
         subprocess.run(["git", "worktree", "remove", "--force", path],
                        capture_output=True, text=True, timeout=30)
@@ -922,6 +945,7 @@ def cleanup_worktrees():
             subprocess.run(["git", "branch", "-D", branch],
                            capture_output=True, text=True, timeout=30)
 
+    # Clean up old worker-named branches (legacy: {name}/issue-{N})
     result = subprocess.run(
         ["git", "branch", "--format", "%(refname:short)"],
         capture_output=True, text=True, timeout=30
@@ -931,11 +955,15 @@ def cleanup_worktrees():
             branch = branch.strip()
             if not branch or branch == "main":
                 continue
-            if branch.startswith(("worktree-agent-", "feat/")) or "/issue-" in branch:
+            # Only delete legacy worker-named branches (e.g. james/issue-28)
+            # Keep feat/issue-N branches — those are active feature worktrees
+            if branch.startswith("worktree-agent-") or (
+                "/issue-" in branch and not branch.startswith("feat/")
+            ):
                 subprocess.run(["git", "branch", "-D", branch],
                                capture_output=True, text=True, timeout=30)
                 if VERBOSE:
-                    log(f"Deleted branch: {branch}")
+                    log(f"Deleted legacy branch: {branch}")
 
     subprocess.run(["git", "remote", "prune", "origin"],
                    capture_output=True, text=True, timeout=30)
