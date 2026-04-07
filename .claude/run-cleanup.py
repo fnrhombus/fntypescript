@@ -25,8 +25,8 @@ def main():
     args = parser.parse_args()
 
     if not args.yes:
-        answer = input("Do you assert that no workers are running right now? [Y/n] ")
-        if answer.strip().lower() in ("n", "no"):
+        answer = input("Do you assert that no workers are running right now? [y/N] ")
+        if answer.strip().lower() not in ("y", "yes"):
             print("Stop all workers first, then run this again.")
             sys.exit(1)
 
