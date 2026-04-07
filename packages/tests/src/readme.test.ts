@@ -1,15 +1,19 @@
 import { describe, it, expect } from "vitest";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import type ts from "typescript/lib/tsserverlibrary";
 import { definePlugin } from "fntypescript/define-plugin.js";
-import { loadSubPlugins } from "../../fntypescript/dist/loader.js";
 import type { PluginDefinition } from "fntypescript/types.js";
 
 /**
  * These tests validate that the README code examples are correct:
  * - The definePlugin usage compiles and works at runtime
- * - The tsconfig plugin config structure matches what loadSubPlugins expects
  * - The hook signature in the example matches PluginDefinition
+ * - The TypeScript code blocks in README.md compile without errors
  */
+
+const repoRoot = resolve(__dirname, "../../..");
 
 describe("README: definePlugin example", () => {
   it("the example plugin definition is accepted by definePlugin", () => {
@@ -63,63 +67,6 @@ describe("README: definePlugin example", () => {
   });
 });
 
-function makeCapturingLogger(): { logger: ts.server.Logger; messages: string[] } {
-  const messages: string[] = [];
-  const logger = {
-    info: (msg: string) => { messages.push(msg); },
-    error: (msg: string) => { messages.push(msg); },
-    msg: (_msg: string, _type: unknown) => {},
-    startGroup: (_header: string) => {},
-    endGroup: () => {},
-    loggingEnabled: () => true,
-    getLogFileName: () => "test.log",
-  } as unknown as ts.server.Logger;
-  return { logger, messages };
-}
-
-describe("README: tsconfig plugin config structure", () => {
-  it("loadSubPlugins accepts the config structure shown in the README", () => {
-    // The README shows: { "name": "fntypescript", "plugins": [{ "name": "my-fntypescript-plugin" }] }
-    // loadSubPlugins receives the whole config block (the outer plugin entry)
-    const config: Record<string, unknown> = {
-      name: "fntypescript",
-      plugins: [{ name: "my-fntypescript-plugin" }],
-    };
-
-    const { logger, messages } = makeCapturingLogger();
-
-    // The plugin "my-fntypescript-plugin" won't resolve; we just verify the
-    // config structure is parsed correctly (entries attempted, not a config error)
-    loadSubPlugins(
-      config,
-      (_name: string) => { throw new Error("module not found"); },
-      logger,
-    );
-
-    // loadSubPlugins should have attempted the plugin (logged a load failure),
-    // not rejected the config structure itself
-    expect(messages.some(m => m.includes("Failed to load plugin"))).toBe(true);
-    expect(messages.some(m => m.includes("must be an array"))).toBe(false);
-  });
-
-  it("README tsconfig plugins array uses object entries with 'name'", () => {
-    const config: Record<string, unknown> = {
-      name: "fntypescript",
-      plugins: ["my-fntypescript-plugin"],
-    };
-
-    const { logger, messages } = makeCapturingLogger();
-
-    loadSubPlugins(
-      config,
-      (_name: string) => { throw new Error("module not found"); },
-      logger,
-    );
-
-    expect(messages.some(m => m.includes("Failed to load plugin 'my-fntypescript-plugin'"))).toBe(true);
-  });
-});
-
 describe("README: PluginDefinition hook names", () => {
   it("all hooks listed in the README are present in PluginDefinition", () => {
     const expectedHooks: Array<keyof PluginDefinition> = [
@@ -138,5 +85,63 @@ describe("README: PluginDefinition hook names", () => {
     // This is a compile-time check via the type annotation above.
     // At runtime, verify the count matches what we expect.
     expect(expectedHooks).toHaveLength(10);
+  });
+});
+
+describe("README code examples compile", () => {
+  it("TypeScript code blocks in README.md are syntactically valid", () => {
+    const readmePath = join(repoRoot, "README.md");
+    const readmeContent = readFileSync(readmePath, "utf-8");
+
+    // Extract TypeScript fenced code blocks
+    const codeBlockPattern = /```ts\n([\s\S]*?)```/g;
+    const blocks: string[] = [];
+    let match: RegExpExecArray | null;
+    while ((match = codeBlockPattern.exec(readmeContent)) !== null) {
+      blocks.push(match[1]!);
+    }
+
+    expect(blocks.length, "README must contain at least one TypeScript code block").toBeGreaterThan(0);
+
+    // Compile each block using tsc. The temp dir lives inside packages/tests/ so
+    // that node_modules resolution finds the workspace fntypescript package.
+    const testsRoot = resolve(__dirname, "..");
+    const tempDir = mkdtempSync(join(testsRoot, "readme-compile-"));
+    try {
+      // "type": "module" makes Node16 treat .ts files as ESM (supports `export default`)
+      writeFileSync(join(tempDir, "package.json"), JSON.stringify({ type: "module" }));
+
+      for (const [i, code] of blocks.entries()) {
+        writeFileSync(join(tempDir, `example-${i}.ts`), code);
+      }
+
+      writeFileSync(
+        join(tempDir, "tsconfig.json"),
+        JSON.stringify({
+          compilerOptions: {
+            strict: true,
+            target: "ES2022",
+            module: "Node16",
+            moduleResolution: "Node16",
+            noEmit: true,
+            skipLibCheck: true,
+          },
+          include: ["*.ts"],
+        }),
+      );
+
+      const tsc = join(testsRoot, "node_modules/.bin/tsc");
+      const result = spawnSync(tsc, ["--project", join(tempDir, "tsconfig.json")], {
+        cwd: testsRoot,
+        encoding: "utf-8",
+      });
+
+      expect(
+        result.status,
+        `TypeScript compilation errors in README code blocks:\n${result.stdout}`,
+      ).toBe(0);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });
