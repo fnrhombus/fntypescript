@@ -466,10 +466,13 @@ def run_pr_fix(pr):
     prompt += f"## Codebase context (cached — do NOT re-explore these files)\n\n{codebase}\n\n"
     prompt += (
         f"Read the full PR diff: gh pr diff {pr_num} --repo {REPO}\n"
-        f"Fix the issues raised in the review, then push to branch {branch}. "
-        f"IMPORTANT: Commit and push frequently — after each meaningful chunk of progress. "
-        f"This ensures work is preserved if the session is interrupted. "
-        f"Run pnpm run build && pnpm run test before pushing."
+        f"Fix the issues raised in the review, then push to branch {branch}.\n\n"
+        f"## MANDATORY before every push\n\n"
+        f"Run `pnpm run build && pnpm run test` and verify BOTH pass with zero errors. "
+        f"Do NOT push if either fails — fix the issue first. "
+        f"CI will reject broken code and you'll have to fix it anyway.\n\n"
+        f"Commit frequently so work is preserved if interrupted. "
+        f"Push after each meaningful chunk — but ONLY after build+test pass."
     )
 
     # Find linked issue for heartbeat (PR fixes are tied to an issue)
@@ -607,10 +610,13 @@ def run_new_task(task):
         f"## Codebase context (cached — do NOT re-explore these files)\n\n{codebase}\n\n"
         f"You already have the full source of all key files above. "
         f"Start implementing immediately — do not explore the codebase.\n\n"
-        f"Write tests first, then implementation. "
-        f"IMPORTANT: Commit and push frequently — after each meaningful chunk of progress. "
-        f"This ensures work is preserved if the session is interrupted. "
-        f"Run pnpm run build && pnpm run test before pushing. "
+        f"Write tests first, then implementation.\n\n"
+        f"## MANDATORY before every push\n\n"
+        f"Run `pnpm run build && pnpm run test` and verify BOTH pass with zero errors. "
+        f"Do NOT push if either fails — fix the issue first. "
+        f"CI will reject broken code and you'll have to fix it anyway.\n\n"
+        f"Commit frequently so work is preserved if interrupted. "
+        f"Push after each meaningful chunk — but ONLY after build+test pass.\n\n"
         f"Create a PR targeting main when done. Reference #{issue_num} in the PR body."
     )
 
