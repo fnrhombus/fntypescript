@@ -50,9 +50,9 @@ def _hsl(h, s, l):
 class WorkerColors:
     """Per-worker color palette. Hue is locked; saturation/lightness vary by message type."""
 
-    def __init__(self, worker_num):
-        # Golden angle distribution for max hue separation between workers
-        self.hue = (worker_num * 137.508) % 360
+    def __init__(self, color_index):
+        # Golden angle on sequential index → max hue separation between concurrent workers
+        self.hue = (color_index * 137.508) % 360
 
     def _c(self, s, l):
         return _hsl(self.hue, s, l)
@@ -107,7 +107,7 @@ IDLE_SLEEP = 180
 
 _worker_num = random.randint(10000, 99999)
 WORKER_ID = f"{WORKER_NAMES[_worker_num % len(WORKER_NAMES)]}-{_worker_num}"
-C = WorkerColors(_worker_num)
+C = WorkerColors(0)
 
 VERBOSE = False
 INTERACTIVE = False
@@ -988,15 +988,14 @@ def worker_loop(max_iters, scale_queue=None):
     log(f"Done ({iteration} iterations).", C.dim)
 
 
-def run_worker_process(args_ns, scale_queue=None):
+def run_worker_process(args_ns, color_index, scale_queue=None):
     """Entry point for each worker subprocess."""
     global VERBOSE, INTERACTIVE, WORKER_ID, C
     VERBOSE = args_ns.verbose
     INTERACTIVE = args_ns.interactive
-    # Each subprocess gets its own unique ID and color palette
     _num = random.randint(10000, 99999)
     WORKER_ID = f"{WORKER_NAMES[_num % len(WORKER_NAMES)]}-{_num}"
-    C = WorkerColors(_num)
+    C = WorkerColors(color_index)
     signal.signal(signal.SIGINT, handle_sigint)
     worker_loop(args_ns.iterations, scale_queue)
 
@@ -1036,7 +1035,9 @@ def main():
 
         # Start first worker
         stopping = False
-        p = multiprocessing.Process(target=run_worker_process, args=(args, scale_queue))
+        next_color = 0
+        p = multiprocessing.Process(target=run_worker_process, args=(args, next_color, scale_queue))
+        next_color += 1
         p.start()
         processes.append(p)
         log(f"Auto-scale: started worker 1{' (max ' + str(max_workers) + ')' if max_workers else ''}", C.emphasis)
@@ -1055,7 +1056,8 @@ def main():
                         continue  # don't spawn new workers after ctrl+c
                     at_cap = max_workers and len(processes) >= max_workers
                     if not at_cap:
-                        p = multiprocessing.Process(target=run_worker_process, args=(args, scale_queue))
+                        p = multiprocessing.Process(target=run_worker_process, args=(args, next_color, scale_queue))
+                        next_color += 1
                         p.start()
                         processes.append(p)
                         log(f"Auto-scale: started worker {len(processes)}"
@@ -1079,8 +1081,8 @@ def main():
         C = SupervisorColors()
         import multiprocessing
         processes = []
-        for _ in range(args.workers):
-            p = multiprocessing.Process(target=run_worker_process, args=(args,))
+        for i in range(args.workers):
+            p = multiprocessing.Process(target=run_worker_process, args=(args, i))
             p.start()
             processes.append(p)
 
